@@ -15,6 +15,11 @@ POST /v1/feedback  {"id": "<decision id> or last", "answers": {"issue_type": "bu
                    corrects (or, with "ok", confirms) answers: they are learned from at once and remembered
 GET /v1/learning -> what has been learned, spot-check results and the latest model switches
 
+Limits (per server process, so a restart resets them):
+  DEV_DECIDE_RATE_PER_MIN         requests per minute from one client address (default 30; 0 turns it off)
+  DEV_DECIDE_MODEL_CALLS_PER_DAY  model calls per UTC day; past it, requests are answered locally (default 300; 0 = no cap)
+  DEV_DECIDE_TRUST_PROXY=1        take the client address from X-Forwarded-For (set it only behind a proxy that writes it)
+
 Authentication: when the environment variable DEV_DECIDE_TOKEN is set (16 characters or more), every
 endpoint except /health needs "Authorization: Bearer <token>" (or "X-Dev-Decide-Token: <token>").
 It listens on 127.0.0.1 by default. To listen beyond this machine (--host 0.0.0.0, as in a container),
@@ -29,6 +34,9 @@ import json
 import os
 import signal
 import sys
+import threading
+import time
+from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -42,8 +50,57 @@ MIN_TOKEN = 16
 LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
 
 
-def make_handler(cwd, token=None, local_only=True):
+def _env_int(name, default):
+    try:
+        return max(0, int(os.environ.get(name, default)))
+    except ValueError:
+        return default
+
+
+class Limits(object):
+    """A per-client request rate and a daily cap on model calls, so a leaked token cannot run up a bill."""
+
+    def __init__(self, per_min, calls_per_day):
+        self.per_min, self.calls_per_day = per_min, calls_per_day
+        self.lock = threading.Lock()
+        self.hits = {}           # client address -> deque of request times in the last minute
+        self.day, self.calls = None, 0
+
+    def allow(self, client):
+        if not self.per_min:
+            return True
+        now = time.monotonic()
+        with self.lock:
+            q = self.hits.setdefault(client, deque())
+            while q and now - q[0] > 60:
+                q.popleft()
+            if len(q) >= self.per_min:
+                return False
+            q.append(now)
+            if len(self.hits) > 10000:  # forget idle clients so memory stays bounded
+                for k in [k for k, v in self.hits.items() if not v or now - v[-1] > 60]:
+                    del self.hits[k]
+            return True
+
+    def _today(self):
+        day = time.strftime("%Y-%m-%d", time.gmtime())
+        if day != self.day:
+            self.day, self.calls = day, 0
+
+    def model_allowed(self):
+        with self.lock:
+            self._today()
+            return not self.calls_per_day or self.calls < self.calls_per_day
+
+    def spent(self, n):
+        with self.lock:
+            self._today()
+            self.calls += int(n or 0)
+
+
+def make_handler(cwd, token=None, local_only=True, limits=None, trust_proxy=False):
     secret = token.encode("utf-8") if token else None
+    limits = limits or Limits(0, 0)
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "dev-decide/" + dd.VERSION
@@ -87,6 +144,19 @@ def make_handler(cwd, token=None, local_only=True):
                     sent = auth[7:].strip()
             return bool(sent) and hmac.compare_digest(sent.encode("utf-8"), secret)
 
+        def _client(self):
+            if trust_proxy:  # the last entry is the one our own proxy added; earlier ones can be forged
+                fwd = [x.strip() for x in (self.headers.get("X-Forwarded-For") or "").split(",") if x.strip()]
+                if fwd:
+                    return fwd[-1]
+            return self.client_address[0]
+
+        def _throttled(self):
+            if limits.allow(self._client()):
+                return False
+            self._send(429, {"error": "too many requests: wait a minute and try again"}, {"Retry-After": "60"})
+            return True
+
         def _deny(self):
             self._send(401, {"error": "unauthorized: send the header Authorization: Bearer <your DEV_DECIDE_TOKEN>"},
                        {"WWW-Authenticate": "Bearer"})
@@ -94,7 +164,8 @@ def make_handler(cwd, token=None, local_only=True):
         def do_GET(self):
             path = self.path.split("?", 1)[0].rstrip("/")
             if path == "/health":
-                self._send(200, {"ok": True, "version": dd.VERSION})
+                self._send(200, {"ok": True, "version": dd.VERSION, "model": _model_backend(cwd),
+                                 "model_calls_left": limits.model_allowed()})
             elif path in ("", "/ui"):  # the page holds no data; every call it makes still needs the token
                 page = (dd.SKILL_DIR / "ui.html").read_bytes()
                 self.send_response(200)
@@ -105,6 +176,8 @@ def make_handler(cwd, token=None, local_only=True):
                 self.send_header("X-Content-Type-Options", "nosniff")
                 self.end_headers()
                 self.wfile.write(page)
+            elif self._throttled():
+                return
             elif not self._authorized():
                 self._deny()
             elif path == "/v1/learning":
@@ -119,6 +192,8 @@ def make_handler(cwd, token=None, local_only=True):
                 length = int(self.headers.get("Content-Length") or 0)
             except ValueError:
                 length = 0
+            if self._throttled():
+                return
             if not self._authorized():
                 if 0 < length <= MAX_BODY:
                     self.rfile.read(length)  # drain it, so the client reads the 401 instead of a reset
@@ -147,14 +222,31 @@ def make_handler(cwd, token=None, local_only=True):
                 out = learn.feedback(cwd, spec.get("id") or "last", answers, spec.get("item"))
                 self._send(400 if out.get("error") else 200, out)
                 return
+            capped = not limits.model_allowed() and str(spec.get("mode") or "").lower() != "local"
+            if capped:
+                spec["mode"] = "local"
             try:
                 out = engine.decide(spec=spec, cwd=cwd)
             except Exception as exc:
                 self._send(500, {"error": "engine error: %s" % type(exc).__name__})
                 return
+            meta = out.get("meta") if isinstance(out.get("meta"), dict) else None
+            if meta is not None:
+                limits.spent(meta.get("model_calls"))
+                if capped:
+                    meta.setdefault("warnings", []).append("the server's daily model-call cap is reached; answered locally")
             self._send(400 if out.get("error") and not out.get("answers") and not out.get("items") else 200, out)
 
     return Handler
+
+
+def _model_backend(cwd):
+    """Which way this server can ask Claude: api, cli or none (the page greys out model modes on none)."""
+    try:
+        import llm
+        return llm.backend_choice(dd.load_policy(dd.project_root(cwd)))
+    except Exception:
+        return "none"
 
 
 def main():
@@ -186,7 +278,9 @@ def main():
         inputs.REFS = False  # remote callers must not read this machine's files; they send "diff" instead
 
     cwd = str(Path(args.cwd).resolve())
-    httpd = ThreadingHTTPServer((args.host, args.port), make_handler(cwd, token, local))
+    limits = Limits(_env_int("DEV_DECIDE_RATE_PER_MIN", 30), _env_int("DEV_DECIDE_MODEL_CALLS_PER_DAY", 300))
+    trust_proxy = os.environ.get("DEV_DECIDE_TRUST_PROXY") == "1"
+    httpd = ThreadingHTTPServer((args.host, args.port), make_handler(cwd, token, local, limits, trust_proxy))
     sys.stderr.write("dev-decide %s listening on http://%s:%d (repo: %s; %s; file references %s)\n"
                      % (dd.VERSION, args.host, args.port, cwd,
                         "token required" if token else "no authentication",

@@ -17,8 +17,7 @@ Then use it in any repository, for example `/dev-decide pr :: DIFF` or `/dev-dec
 
 - **Your own key.** Nothing here uses anyone else's credentials. By default it asks Claude through your own Claude
   Code sign-in. To use the API instead, set `ANTHROPIC_API_KEY` in your shell. Never commit the key.
-- **Needs** Python 3.8+ and git on your PATH as `python3` (on Windows with only `py`, use the clone install below),
-  and Git Bash or WSL on Windows.
+- **Needs** Python 3.8+ (found as `python3`, `python` or `py -3`) and git, and Git Bash or WSL on Windows.
 - **Starter models are built in.** The first time it runs in a repository it copies in pretrained models
   (`skill/starter-models/`, 2.6 MB), so `issue_type` is answered locally from day one. The other models switch on by
   themselves once they have learned enough from your use. A repository that already has models is never overwritten.
@@ -26,20 +25,24 @@ Then use it in any repository, for example `/dev-decide pr :: DIFF` or `/dev-dec
   with every setting at its default and a `_help` section that explains each one (what to ask Claude with, how
   risky paths are rated, learning, the routing hook, your own questions and gates). Edit it and save; changes apply
   on the next run. Commit it to share settings with your team. It never overwrites a file you already have. Its
-  values override your personal `~/.claude/dev-decide.json`, so delete a setting there if you want yours to win.
+  values override your personal `~/.claude/dev-decide.json`, so delete a setting from the project file if you want
+  your personal one to win.
 - **Routing hint hook is included.** On each prompt it checks, locally and in about 70 ms, whether one of your agents or
   skills clearly matches, and only then adds a one-line hint. It never calls a model and never blocks a prompt. To
   turn it off, put `{"router_hook": {"enabled": false}}` in `.claude/dev-decide.json`, or disable the plugin's hooks.
 
-**Install from a clone instead** (also adds the optional routing hook, and works when only `py` exists on Windows):
+**Install from a clone instead** (for the HTTP API on your computer, or to choose whether to add the routing hook):
 
 ```
 git clone https://github.com/pawanptu/dev-decide
 python3 dev-decide/dev-decide-v5/install.py              # add --router-hook for the routing hint
 ```
 
+**Web page and server.** `serve.py` also serves a web page with a live console at `/`. The root `Dockerfile` builds
+the server; `setup_deploy.md` covers deploying it (Render takes about 10 minutes).
+
 **Maintainers:** the engine lives in `dev-decide-v5/skill/`. After changing it, run `python3 tools/sync.py` to copy it
-into `plugin/` and `dev-decide-server/`.
+into `plugin/`, then `python3 tools/smoke.py` (CI runs the same checks on Linux and Windows, Python 3.8 and 3.12).
 
 ## What is in this repo
 

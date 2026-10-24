@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Copy the engine (dev-decide-v5/skill) into the plugin and the deploy folder, so the three never drift.
+"""Copy the engine (dev-decide-v5/skill) into the plugin, so the two never drift.
+
+The server image is built from dev-decide-v5/skill directly (see the root Dockerfile).
 
   python3 tools/sync.py
 """
@@ -8,7 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "dev-decide-v5" / "skill"
-TARGETS = [ROOT / "plugin" / "skills" / "dev-decide", ROOT / "dev-decide-server" / "skill"]
+TARGETS = [ROOT / "plugin" / "skills" / "dev-decide"]
 
 for dest in TARGETS:
     if dest.exists():

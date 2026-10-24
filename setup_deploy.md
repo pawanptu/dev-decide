@@ -11,9 +11,15 @@ free platform.
 Platform limits in Part 2 were checked against each provider's documentation on 19–23 October 2026. Free tiers
 change often, so look at the provider's page again before you rely on a limit.
 
+> **Quickest start: install the plugin.** In Claude Code run `/plugin marketplace add pawanptu/dev-decide`, then
+> `/plugin install dev-decide@dev-decide`. That gives you the skill, starter models, a documented settings file
+> (`.claude/dev-decide.json`, written on first use) and the routing hint. Part 1 below is the manual route, and is
+> still the way to go when you want the HTTP API on your computer.
+
 **Contents**
 - [Part 1: Run it locally](#part-1-run-it-locally) (steps 1–12)
 - [Part 2: Deploy it live](#part-2-deploy-it-live)
+  - [Deploy straight from the GitHub repository](#deploy-straight-from-the-github-repository) (simplest: Render)
   - [Choose a platform](#choose-a-platform) (three free options; ★ marks the best one)
   - [Prepare the server folder](#prepare-the-server-folder) (needed for every option)
   - [Option A ★ Oracle Cloud Always Free](#option-a--oracle-cloud-always-free-best)
@@ -181,6 +187,17 @@ python3 -c 'import json; print(json.dumps({"questions": ["pr"], "diff": open("pr
 python3 $DD --fail-on block --file request.json
 ```
 
+**As a git pre-commit hook**, use local mode so every commit stays instant and free. It still blocks on exact
+findings such as a live API key in the staged diff. Save this as `.git/hooks/pre-commit` and make it executable:
+
+```sh
+#!/bin/sh
+out=$(sh "$HOME/.claude/skills/dev-decide/scripts/run.sh" decide.py --fail-on block --summary "+local pr :: DIFF --staged")
+if [ $? -eq 1 ]; then echo "dev-decide blocked this commit: $out"; exit 1; fi
+```
+
+`run.sh` finds Python 3.8+ as `python3`, `python` or `py -3`. Skip the hook once with `git commit --no-verify`.
+
 ### Step 9. Run the HTTP API on your computer
 
 The API lets your own apps and scripts call dev-decide the way they would call Jev. Start it and leave it running
@@ -191,7 +208,7 @@ python3 ~/.claude/skills/dev-decide/scripts/serve.py --port 8765 --cwd /path/to/
 # dev-decide 5.0.1 listening on http://127.0.0.1:8765 (repo: /path/to/your/repo; no authentication; file references on)
 ```
 
-From a second terminal:
+Open http://127.0.0.1:8765/ in a browser for a web page with a live console, or use curl from a second terminal:
 
 ```bash
 curl -s localhost:8765/health
@@ -290,6 +307,39 @@ Claude Code skill and the routing hook stay on your computer. On the server:
   `ANTHROPIC_API_KEY`, stored as a platform secret. Without a key the server answers from its local tiers only.
 - **Learning needs a disk that survives restarts.** Everything it learns lives in `.claude/dev-decide/`. Only
   Option A keeps that folder across restarts. On B and C it starts again from your image every time.
+
+### Deploy straight from the GitHub repository
+
+The repository is already set up to deploy: a `Dockerfile` at its root builds the server from the one copy of the
+engine (`dev-decide-v5/skill`), and `dev-decide-server/repo/` holds the server's own project (its policy in
+`.claude/dev-decide.json` and its models). On **Render**:
+
+| Field | Value |
+|---|---|
+| Repository | your fork or copy of `dev-decide`, branch `main` |
+| Language | **Docker** |
+| Root Directory | leave **empty** (the Dockerfile is at the repository root) |
+| Instance type | **Free** |
+| Health Check Path | `/health` |
+| Environment | `DEV_DECIDE_TOKEN` (required, 32 random characters), `ANTHROPIC_API_KEY` (optional), `DEV_DECIDE_LEARNING=0` |
+
+When it is live, open the service URL in a browser: `/` is a web page with a live console (paste the token there),
+and `/health` reports the version, whether Claude is available (`"model": "api"` or `"none"`) and whether today's
+model-call cap has room left. Every other endpoint still needs the token.
+
+The server limits itself so a leaked token cannot run up a bill. Change the limits with environment variables:
+
+| Variable | Default | What it does |
+|---|---|---|
+| `DEV_DECIDE_RATE_PER_MIN` | `30` | requests per minute from one client address; `0` turns it off |
+| `DEV_DECIDE_MODEL_CALLS_PER_DAY` | `300` | Claude calls per UTC day; past it, requests are answered locally; `0` = no cap |
+| `DEV_DECIDE_TRUST_PROXY` | `1` in the image | read the client address from the platform proxy's `X-Forwarded-For` |
+
+The limits are per server process, so they reset when the service restarts or wakes from sleep. Set a spend limit on
+the API key too (see "Keep it safe and cheap").
+
+The rest of Part 2 builds a separate server folder by hand. Use it for Oracle Cloud (Option A), or when you don't
+want to deploy from this repository.
 
 ### Choose a platform
 
@@ -840,6 +890,8 @@ to wake up.
 - **Escalations to Sonnet** are capped at 30 a day. Set `DEV_DECIDE_ESCALATE=0` to turn them off.
 - **On Render and Koyeb those caps reset** whenever the container restarts. That's another reason to run them with
   learning off.
+- **Per client and per day.** `DEV_DECIDE_RATE_PER_MIN` (default 30) and `DEV_DECIDE_MODEL_CALLS_PER_DAY` (default
+  300) limit requests and Claude calls; see "Deploy straight from the GitHub repository".
 - **Per request.** Send `"mode": "local"` and it never calls a model.
 - **A server with no model calls at all.** Set `DEV_DECIDE_BACKEND=none`, or leave the key out.
 

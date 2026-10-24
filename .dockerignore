@@ -1,0 +1,11 @@
+# Only the engine and the server's project go into the image.
+*
+!dev-decide-v5/skill
+!dev-decide-server/repo
+**/__pycache__
+**/*.pyc
+**/.env
+dev-decide-server/repo/.claude/dev-decide/cache
+dev-decide-server/repo/.claude/dev-decide/learn
+dev-decide-server/repo/.claude/dev-decide/*.jsonl
+dev-decide-server/repo/.claude/dev-decide/last.json

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>dev-decide</title>
+<title>Dev Decide</title>
 <meta name="description" content="Typed, calibrated decisions for software and AI work. Local in milliseconds, Claude when it matters.">
 <style>
   :root {
@@ -139,6 +139,10 @@
   .ans .val { font-weight:700; font-size:16px; overflow-wrap:anywhere; }
   .ans .val.unsure { color:var(--review); }
   .ans .val.none { color:var(--dim); font-weight:500; font-size:14px; }
+  .ans.guess { background:transparent; border-style:dashed; }
+  .ans.guess .val { color:var(--muted); font-weight:600; }
+  .guess-note { font-size:12px; color:var(--dim); margin-top:4px; }
+  .seg button[disabled] { opacity:.4; cursor:not-allowed; }
   .src-tag { font-size:11px; padding:2px 8px; border-radius:6px; background:var(--panel2); color:var(--muted); border:1px solid var(--line); white-space:nowrap; }
   .src-tag.local { color:var(--pass); } .src-tag.model { color:var(--a2); }
   .bar { height:5px; background:var(--line); border-radius:3px; margin-top:9px; overflow:hidden; }
@@ -205,13 +209,13 @@
 
 <nav>
   <div class="wrap">
-    <a class="brand" href="#top" aria-label="dev-decide home">
+    <a class="brand" href="#top" aria-label="Dev Decide home">
       <svg viewBox="0 0 32 32" fill="none" aria-hidden="true">
         <defs><linearGradient id="lg" x1="0" y1="0" x2="32" y2="32"><stop stop-color="#8b5cf6"/><stop offset="1" stop-color="#22d3ee"/></linearGradient></defs>
         <rect x="1" y="1" width="30" height="30" rx="9" fill="url(#lg)"/>
         <path d="M9 16h5l3-6 4 12 2-6h0" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
-      dev-decide
+      Dev Decide
     </a>
     <div class="links">
       <a href="#try">Try it</a><a href="#how">How it works</a><a href="#bundles">Decisions</a><a href="#install">Install</a>
@@ -229,7 +233,7 @@
     <div>
       <span class="eyebrow"><b></b> v5.0.1 · Claude Code plugin · MIT</span>
       <h1>Decisions,<br><span class="gt">not prose.</span></h1>
-      <p class="lead">dev-decide gives your agents typed, calibrated answers to route work, triage issues and gate pull requests. Local in milliseconds when it can. Claude when it matters. Better with every answer.</p>
+      <p class="lead">Dev Decide gives your agents typed, calibrated answers to route work, triage issues and gate pull requests. Local in milliseconds when it can. Claude when it matters. Better with every answer.</p>
       <div class="cta">
         <a class="btn primary" href="#try">Try it live →</a>
         <a class="btn" href="#install">Install the plugin</a>
@@ -406,7 +410,7 @@
 
 <footer>
   <div class="wrap">
-    <div>dev-decide 5.0.1 · MIT</div>
+    <div>Dev Decide 5.0.1 · MIT</div>
     <div><a href="https://github.com/pawanptu/dev-decide" target="_blank" rel="noopener">GitHub</a> · <a href="/health">Status</a></div>
   </div>
 </footer>
@@ -428,7 +432,7 @@
     hybrid: "Local first, Claude for the rest. Needs ANTHROPIC_API_KEY on the server.",
     llm: "Every question goes to Claude. Slower; needs ANTHROPIC_API_KEY on the server."
   };
-  var q = "triage", mode = "local";
+  var q = "triage", mode = "local", modelBackend = "unknown";
 
   function el(tag, cls, text) {
     var n = document.createElement(tag);
@@ -469,7 +473,17 @@
   });
 
   fetch("/health").then(function (r) { return r.json(); }).then(function (d) {
-    $("dot").className = "dot ok"; $("health").textContent = "online · v" + d.version;
+    $("dot").className = "dot ok";
+    modelBackend = d.model || "none";
+    var noModel = modelBackend === "none", capped = d.model_calls_left === false;
+    $("health").textContent = "online · v" + d.version + (noModel ? " · local only" : capped ? " · daily Claude limit reached" : " · Claude available");
+    if (noModel || capped) {
+      Array.prototype.forEach.call($("mode").querySelectorAll('[data-v="hybrid"],[data-v="llm"]'), function (b) {
+        b.disabled = true; b.title = noModel ? "This server has no ANTHROPIC_API_KEY, so it cannot ask Claude." : "The server's daily limit of Claude calls is used up.";
+      });
+      MODE_HINT.local = noModel ? "This server answers locally only (no Claude API key configured)." : "Claude's daily limit on this server is used up; answering locally.";
+      if (mode === "local") $("mode-hint").textContent = MODE_HINT.local;
+    }
   }).catch(function () { $("dot").className = "dot bad"; $("health").textContent = "unreachable (it may be waking up)"; });
 
   function answerValue(a) {
@@ -495,7 +509,9 @@
     var meta = data.meta || {}, via = meta.via || {}, local = 0, model = 0;
     Object.keys(via).forEach(function (k) { if (LOCAL[k]) local += via[k]; else if (k.indexOf("llm") === 0) model += via[k]; });
     var m = el("div", "meta");
-    m.appendChild(el("span", "pill", local + " local"));
+    var guesses = via.hint || 0;
+    m.appendChild(el("span", "pill", local + " trusted local"));
+    if (guesses) m.appendChild(el("span", "pill", guesses + " rough guess" + (guesses > 1 ? "es" : "")));
     if (model) m.appendChild(el("span", "pill", model + " by Claude"));
     if (meta.ms) m.appendChild(el("span", "pill", meta.cache ? "cached · " + meta.ms.total + " ms" : meta.ms.total + " ms"));
     if (meta.cost_usd) m.appendChild(el("span", "pill", "$" + meta.cost_usd));
@@ -509,9 +525,19 @@
         left.appendChild(el("div", "val none", mode === "local" ? "not decided locally" : a.error.replace(/^not decided: /, "not decided: ")));
         top.appendChild(left); card.appendChild(top); list.appendChild(card); return;
       }
+      var v = a.via || "";
+      if (v === "hint") {  // a quick local heuristic, not a trusted answer: show it as a guess, without a confidence bar
+        card.className = "ans guess";
+        left.appendChild(el("div", "val", answerValue(a)));
+        top.appendChild(left);
+        top.appendChild(el("span", "src-tag", "rough guess"));
+        card.appendChild(top);
+        card.appendChild(el("div", "guess-note", "Local heuristic only, not a trusted answer." + (modelBackend !== "none" ? " Use Hybrid for a real one." : "")));
+        list.appendChild(card);
+        return;
+      }
       left.appendChild(el("div", "val" + (a.abstain ? " unsure" : ""), answerValue(a) + (a.abstain ? "  ?" : "")));
       top.appendChild(left);
-      var v = a.via || "";
       top.appendChild(el("span", "src-tag " + (LOCAL[v] ? "local" : v.indexOf("llm") === 0 ? "model" : ""), v));
       card.appendChild(top);
       var bar = el("div", "bar"), fill = el("i"); fill.style.width = "0%"; bar.appendChild(fill); card.appendChild(bar);

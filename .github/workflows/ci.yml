@@ -1,0 +1,39 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.8", "3.12"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Compile
+        run: python -m compileall -q dev-decide-v5/skill/scripts dev-decide-kit tools
+      - name: Smoke tests
+        run: python tools/smoke.py
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the server image
+        run: docker build -t dev-decide .
+      - name: Start it and call /health
+        run: |
+          docker run -d --name dd -p 8765:8765 -e DEV_DECIDE_TOKEN=ci-token-0123456789abcdef dev-decide
+          for i in $(seq 1 30); do curl -fs localhost:8765/health && break; sleep 1; done
+          curl -fs localhost:8765/health
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8765/v1/learning)" = "401"

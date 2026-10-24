@@ -1,0 +1,5 @@
+# Keep text files LF everywhere (the engine and its scripts run on Linux servers too); never touch binaries.
+* text=auto eol=lf
+*.bin binary
+*.safetensors binary
+*.png binary

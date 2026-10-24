@@ -212,6 +212,7 @@ def decide(text=None, spec=None, cwd=None, extra_flags=(), use_cache=True):
     cwd = str(cwd or os.getcwd())
     root = dd.project_root(cwd)
     dd.seed_policy(root)
+    fastmodel.seed_models(root)  # only here: the routing hook must never write to a repository
     policy = dd.load_policy(root)
     cat = dd.load_catalog(policy)
     req = request.parse_spec(spec, cat) if spec is not None else request.parse_text(text, cat)

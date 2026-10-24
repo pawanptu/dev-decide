@@ -109,10 +109,6 @@ def main():
     if dest.exists():
         shutil.rmtree(str(dest))
     shutil.copytree(str(SRC), str(dest), ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
-    if py != "python3":
-        skill_md = dest / "SKILL.md"
-        skill_md.write_text(skill_md.read_text(encoding="utf-8").replace("python3 ${CLAUDE_SKILL_DIR}",
-                                                                         py + " ${CLAUDE_SKILL_DIR}"), encoding="utf-8")
     print("installed the skill: %s" % dest)
     if legacy.exists():
         legacy.unlink()

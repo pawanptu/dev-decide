@@ -371,8 +371,6 @@ class Registry(object):
     def __init__(self, root):
         self.dir = Path(root) / ".claude" / "dev-decide" / "models"
         ipath = self.dir / "index.json"
-        if not ipath.exists():
-            seed_models(root)
         sig = _signature(ipath)
         hit = _LOADED.get(str(ipath))
         if hit and hit[0] == sig:

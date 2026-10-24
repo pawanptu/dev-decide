@@ -734,12 +734,15 @@ def rollback(p, preset, which=None):
             return None, "version %s of %s is not archived (have: %s)" % (which, preset, ", ".join(str(v[0]) for v in vs))
         pick = found[0]
     n, meta, slot = pick
+    # Read the chosen version first: archiving the current model below prunes the oldest slot, which may be this one.
+    body = (slot / "model.json").read_bytes()
+    binary = (slot / "model.bin").read_bytes() if (slot / "model.bin").exists() else None
     index = _index(p)
     cur = index.get(preset) or {}
     archive(p, preset, cur)  # the undone model stays available too
-    shutil.copy2(str(slot / "model.json"), str(p.models / ("%s.json" % preset)))
-    if (slot / "model.bin").exists():
-        shutil.copy2(str(slot / "model.bin"), str(p.models / ("%s.bin" % preset)))
+    _write_bytes(p.models / ("%s.json" % preset), body)
+    if binary is not None:
+        _write_bytes(p.models / ("%s.bin" % preset), binary)
     restored = {k: v for k, v in meta.items() if k != "archived"}
     restored["restored"] = time.strftime("%Y-%m-%d %H:%M")
     index[preset] = restored

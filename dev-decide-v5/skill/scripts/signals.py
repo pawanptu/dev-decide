@@ -212,6 +212,9 @@ STRONG_SECRETS = [
 GENERIC_SECRET = _lazy(
     r"""(?i)\b(api[_-]?key|apikey|secret(?:[_-]?key)?|client[_-]?secret|access[_-]?token|auth[_-]?token|"""
     r"""bearer|passw(?:or)?d|pwd|private[_-]?key|credentials?)\b["']?\s*[:=]\s*["']([^"'\s]{8,})["']""")
+# .env and shell style: KEY=value with no quotes (GENERIC_SECRET needs quotes, so these were missed).
+ENV_SECRET = _lazy(r"(?i)^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*(?:key|secret|token|passw(?:or)?d|pwd|credentials?)"
+                   r"[A-Za-z0-9_]*)\s*[:=]\s*([A-Za-z0-9_\-+/=.]{12,})\s*$")
 SECRET_WORD = _lazy(r"(?i)(passw(or)?d|secret|token|api[_-]?key|apikey|private[_-]?key|credential)")
 PLACEHOLDER = _lazy(r"(?i)(x{4,}|\*{3,}|\.{3}|<[^>]*>|your[_-]?|example|changeme|change_me|dummy|placeholder|"
                          r"sample|redacted|fake|\$\{|\{\{|env\(|process\.env|os\.environ|getenv|secrets\.|"
@@ -587,6 +590,7 @@ class Facts(object):
         self.scan_text = ""
         self.lines_changed = 0
         self.config_lines = 0
+        self.scan_truncated = False  # the secret scan stopped at MAX_SCAN, so "no secret" is not a fact
 
     def fact(self, strength, text, sig=None):
         if (strength, text) not in self.facts:
@@ -605,7 +609,7 @@ def _code_files(item):
     return [f for f in item.files if not f.binary]
 
 
-def _scan_lines(item):
+def _scan_lines(item, F=None):
     """(location, line) pairs to scan: added lines of diffs, whole files, and free text."""
     out, total = [], 0
     for f in _code_files(item):
@@ -613,6 +617,8 @@ def _scan_lines(item):
             out.append((_loc(f, i), line))
             total += len(line)
             if total > MAX_SCAN:
+                if F is not None:
+                    F.scan_truncated = True
                 return out
     if item.text:
         for i, line in enumerate(item.text.splitlines(), 1):
@@ -692,7 +698,7 @@ def _files(item, F):
 
 
 def _secrets(item, F):
-    for loc, line in _scan_lines(item):
+    for loc, line in _scan_lines(item, F):
         if len(line) > 5000:
             line = line[:5000]
         if SECRET_WORD.search(line):
@@ -710,6 +716,14 @@ def _secrets(item, F):
         if m:
             val = m.group(2)
             if not PLACEHOLDER.search(val) and _entropy(val) >= 3.0 and not re.fullmatch(r"[a-z_]+", val):
+                F.secrets.append(("hardcoded %s" % m.group(1).lower(), _mask(val), loc, 0.75))
+            continue
+        m = ENV_SECRET.search(line)
+        if m:
+            val = m.group(2)
+            # a real credential mixes letters and digits; identifiers and dotted settings paths do not
+            if (not PLACEHOLDER.search(val) and _entropy(val) >= 3.0 and re.search(r"\d", val)
+                    and re.search(r"[A-Za-z]", val)):
                 F.secrets.append(("hardcoded %s" % m.group(1).lower(), _mask(val), loc, 0.75))
     for kind, masked, loc, p in F.secrets[:3]:
         F.fact("exact" if p >= 0.85 else "hint", "possible secret (%s) %s at %s" % (kind, masked, loc), "secret")
@@ -936,6 +950,7 @@ def _code(item, F):
         if ORM_MODEL.search(f.path) and any(ORM_FIELD.search(l) for l in added + removed):
             F.migration.setdefault("orm_models", f.path)
         if cat in ("code",) and f.status not in ("added", "file"):
+            first = len(F.breaking)
             old = {}
             for l in removed:
                 m = SIGNATURE.match(l)
@@ -967,8 +982,8 @@ def _code(item, F):
                 if m and not any(re.match(r"^\s*export\b.*\b%s\b" % re.escape(m.group(1)), a) for a in added):
                     F.breaking.append((0.72, "%s: export %s removed" % (f.path, m.group(1))))
                     break
-            if PUBLIC_API_PATH.search(f.path) and removed and F.breaking:
-                F.breaking = [(min(p + 0.1, 0.92), e) for p, e in F.breaking]
+            if PUBLIC_API_PATH.search(f.path) and removed:  # boost only this file's findings, not earlier files'
+                F.breaking[first:] = [(min(p + 0.1, 0.92), e) for p, e in F.breaking[first:]]
         if cat == "code":
             lines = added
             for i, l in enumerate(lines):
@@ -1045,6 +1060,8 @@ def decide(preset, F, item, routes=None, router=None):
             ev = ["%s %s at %s" % (k, m, l) for k, m, l, _ in F.secrets[:3]]
             return V(best[3], EXACT if best[3] >= 0.85 else HINT, ev)
         if has_files or text:
+            if F.scan_truncated:
+                return V(0.1, HINT, ["the change is too large to scan fully for credentials"])
             return V(0.04, HINT if F.secret_words else EXACT,
                      ["no credential patterns in the changed lines"] if not F.secret_words else
                      ["secret-like words present but no credential pattern matched"])
