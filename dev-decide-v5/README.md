@@ -259,6 +259,13 @@ locally in about 70 ms. Only when the match is clear, it adds one line of contex
 closely matches the skill `db-migrate` ... confidence 0.86". It never blocks a prompt or calls a model,
 and it stores nothing. Tune or disable it under `router_hook` in the policy file.
 
+Without a trained route model, matching blends words (TF-IDF) with meaning (the bundled embedding model) and with
+technical areas (postgres, column and schema count as "database"; css and button as "frontend"), so a request can
+match a skill it shares no words with. Measured on the kit's 351 labeled routing requests (`tools/eval_router.py`;
+weights tuned on one half, figures from the other): hints are right 88% of the time (was 80.5%), and with a single
+unrelated skill installed a false hint appears for 3.2% of requests (was 19.5%). The price is fewer hints: 45% of
+requests get one (was 64%).
+
 ## Presets and bundles
 
 - **choose:** task_type, domain (32 areas, including AI, ML, data, robotics, web3, quantum), language, issue_type,

@@ -22,14 +22,31 @@ by Sonnet, in 89 model calls for $1.22. Retraining with meaning features needed 
 | Decision | Features chosen | Answered locally (test) | Overall test accuracy (was) | Status |
 |---|---|---|---|---|
 | `route` | words + meaning (f4) | 91% at 94% accuracy | 90.6% (84.9%) | **enabled** |
-| `issue_type` | words (f1) | 98% at 98% accuracy | 95.5% (95.5%) | **enabled** |
+| `issue_type` | words + meaning (f3), retrained 25 October | 89% at 97% accuracy | 89.2% on a test split that now includes short reports | **enabled** |
 | `severity` | words (f1) | 69% at 83% accuracy | 78.6% (78.6%), 95% within one level | not yet |
 | `domain` | words + meaning (f3) | 47% at 89% accuracy | 68.4% (57.9%) across 32 classes | not yet |
 | `breaking_change` | words (f1) | 37%, only 7 answers | 63.2% (63.2%) | not yet |
 | `risk` | words + spelling (f2) | 9%, 2 answers | 68.2% (63.6%), 82% within one level | not yet |
 
 Meaning features won where the decision is about topic (routing, domain), and word features where it is about
-the kind of report (issue type, severity), so each decision keeps what measures best.
+the kind of report (severity), so each decision keeps what measures best.
+
+**Retrained `issue_type` (25 October 2026): short reports.** Every generated issue except the noise ones was 15 words
+or longer, so the first model learned "short means noise": it called "App crashes on startup" and "Please add dark
+mode" `duplicate_or_noise` at about 100%, and answered them locally. 150 short, hand-labeled reports (all six types,
+`data/triage/short_examples.py`) were added and the model retrained with no model calls; meaning features (f3) now
+win. On 60 short reports it never trained on (`data/triage/short_test.jsonl`, `tools/eval_issue_type.py`):
+
+| | First model | Retrained |
+|---|---|---|
+| Accuracy on short reports | 35.0% | 88.3% |
+| Answered locally / right when answered | 96.7% / 34.5% | 91.7% / 94.5% |
+| Long reports held out by both runs (40) | 95.0% | 95.0% |
+
+The model alone now takes about 0.8 ms instead of 0.14 ms, because it reads meaning features. The run's report is
+`reports/train-2026-10-25-short-issues.json`; `severity` and `domain` were not changed. Repositories that still hold
+the first starter model get the new one on their next decision; models you trained or the learning loop promoted
+are never replaced.
 
 **Speed.** Measured on a 2-core cloud VM with no model call, against Jev's reported 70–500 ms:
 

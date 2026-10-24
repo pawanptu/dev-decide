@@ -119,6 +119,62 @@ def rollback():
     shutil.rmtree(str(root), ignore_errors=True)
 
 
+def routing():
+    sys.path.insert(0, str(SCRIPTS))
+    sys.path.insert(0, str(ROOT / "tools"))
+    import router
+    import eval_router
+    one = [{"name": "db-migrate", "kind": "skill", "description": "Database schema changes, migrations and rollbacks"}]
+    hit = router.best_route("rename the user_email column to email in postgres without downtime", one,
+                            min_confidence=0.6, min_margin=0.2)
+    check("routing hint: postgres column rename reaches a db-migrate skill", bool(hit) and hit[0] == "db-migrate",
+          str(hit))
+    miss = router.best_route("fix the CSS on the login button", one, min_confidence=0.6, min_margin=0.2)
+    check("routing hint: an unrelated request stays silent", miss is None, str(miss))
+    routes, rows = eval_router.load("test")
+    r = eval_router.evaluate(routes, rows)
+    check("routing hints on held-out requests: precision >= 85%", (r["hint_precision"] or 0) >= 0.85,
+          "%.3f" % (r["hint_precision"] or 0))
+    check("routing hints with one unrelated skill: false hints <= 6%", r["one_skill_false_hints"] <= 0.06,
+          "%.3f" % r["one_skill_false_hints"])
+
+
+def short_issues():
+    sys.path.insert(0, str(ROOT / "tools"))
+    import eval_issue_type
+    r = eval_issue_type.evaluate(SKILL / "starter-models")
+    check("starter issue_type model on held-out short reports: accuracy >= 85%", r["accuracy"] >= 0.85,
+          "%.3f" % r["accuracy"])
+
+
+def starter_upgrade():
+    sys.path.insert(0, str(SCRIPTS))
+    import ddcore as dd
+    import fastmodel as fm
+    starters = json.loads((SKILL / "starter-models" / "index.json").read_text(encoding="utf-8"))
+    preset = next((k for k, v in starters.items() if v.get("replaces")), None)
+    if preset is None:
+        check("starter upgrade: a starter model lists the versions it replaces", False)
+        return
+    old = starters[preset]["replaces"][0]
+    for case, patch, upgrade in [("an old starter is upgraded", {}, True),
+                                 ("a model the learning loop promoted is kept",
+                                  {"source": "dev-decide-learn", "version_id": "learn:1:1"}, False),
+                                 ("a model you rolled back to is kept", {"restored": "2026-10-24 10:00"}, False),
+                                 ("your own exported model is kept", {"trained": "2026-10-24 09:00:00"}, False)]:
+        root = Path(tempfile.mkdtemp(prefix="dd-smoke-"))
+        dest = dd.state_dir(root) / "models"
+        dest.mkdir(parents=True, exist_ok=True)
+        entry = {"enabled": True, "featurizer": "f1", "source": "dev-decide-kit", "trained": old}
+        entry.update(patch)
+        (dest / "index.json").write_text(json.dumps({preset: entry}), encoding="utf-8")
+        (dest / ("%s.json" % preset)).write_text('{"marker": "mine"}', encoding="utf-8")
+        fm.seed_models(root)
+        kept = json.loads((dest / ("%s.json" % preset)).read_text(encoding="utf-8")).get("marker") == "mine"
+        check("starter upgrade: " + case, kept != upgrade)
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
 def server():
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
@@ -162,7 +218,8 @@ def server():
 
 
 if __name__ == "__main__":
-    for step in (manifests, plugin_in_sync, first_run, hook_writes_nothing, secrets, rollback, server):
+    for step in (manifests, plugin_in_sync, first_run, hook_writes_nothing, secrets, rollback, routing, short_issues,
+                 starter_upgrade, server):
         try:
             step()
         except Exception as exc:

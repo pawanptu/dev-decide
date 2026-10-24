@@ -42,7 +42,7 @@
   },
   "issue_type": {
     "enabled": true,
-    "featurizer": "f1",
+    "featurizer": "f3",
     "kind": "choose",
     "classes": [
       "bug",
@@ -53,15 +53,18 @@
       "support"
     ],
     "threshold": 0.6,
-    "temperature": 0.4708,
+    "temperature": 0.5322,
     "source": "dev-decide-kit",
-    "trained": "2026-10-23 13:07:56",
-    "test_accuracy": 0.9545,
-    "test_ece": 0.0516,
-    "coverage": 0.9772727272727273,
-    "accepted_accuracy": 0.9767441860465116,
+    "trained": "2026-10-25 00:25:49",
+    "test_accuracy": 0.8923,
+    "test_ece": 0.0706,
+    "coverage": 0.8923076923076924,
+    "accepted_accuracy": 0.9655172413793104,
     "reason": "accepted answers reach the target on held-out data",
-    "test_source": "held-out teacher labels"
+    "test_source": "held-out teacher labels",
+    "replaces": [
+      "2026-10-23 13:07:56"
+    ]
   },
   "severity": {
     "enabled": false,

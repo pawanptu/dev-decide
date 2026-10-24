@@ -346,7 +346,10 @@ def _signature(*paths):
 def seed_models(root):
     """First use in a repository: copy the starter models shipped with the skill (skill/starter-models/).
 
-    Only when the repository has no models yet, so what it has learned or trained is never overwritten.
+    Only when the repository has no models yet, so what it has learned or trained is never overwritten. Later,
+    a starter model whose index entry lists `replaces` (the "trained" stamps of earlier starter versions)
+    upgrades a repository's model only when that model is exactly one of those earlier starters: never one the
+    learning loop promoted, one you trained or exported yourself, or one you rolled back to.
     """
     src = dd.SKILL_DIR / "starter-models"
     if not (src / "index.json").is_file():
@@ -356,6 +359,7 @@ def seed_models(root):
         dest = dd.state_dir(root) / "models"  # state_dir also writes the folder's .gitignore
         dest.mkdir(parents=True, exist_ok=True)
         if (dest / "index.json").exists():
+            _upgrade_starters(src, dest)
             return
         for f in sorted(src.iterdir()):
             if f.is_file() and f.name != "index.json":
@@ -363,6 +367,26 @@ def seed_models(root):
         shutil.copy2(str(src / "index.json"), str(dest / "index.json"))  # last: its presence means "complete"
     except OSError:
         pass
+
+
+def _upgrade_starters(src, dest):
+    import shutil
+    starters = dd.read_json(src / "index.json", default={})
+    index = dd.read_json(dest / "index.json", default={})
+    changed = False
+    for preset, entry in starters.items():
+        old = index.get(preset)
+        replaces = entry.get("replaces") or []
+        if not isinstance(old, dict) or old.get("trained") not in replaces or old.get("source") != "dev-decide-kit" \
+                or old.get("version_id") or "restored" in old:
+            continue
+        for ext in (".bin", ".json"):  # the .json last: the model is read through it
+            if (src / (preset + ext)).is_file():
+                shutil.copy2(str(src / (preset + ext)), str(dest / (preset + ext)))
+        index[preset] = entry
+        changed = True
+    if changed:
+        dd.write_json(dest / "index.json", index, indent=2)
 
 
 class Registry(object):

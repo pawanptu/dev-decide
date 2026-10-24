@@ -478,15 +478,20 @@ COMMIT_FROM_TASK = {"feature": "feat", "bugfix": "fix", "refactor": "refactor", 
                     "data_migration": "feat", "ui_ux": "feat", "ml_experiment": "feat", "model_training": "feat",
                     "prompt_engineering": "feat", "eval": "test", "question": "chore"}
 ISSUE_WORDS = {
-    "bug": _rx(r"\b(crash\w*|errors?|exception|broken|fails?|failing|500|stack ?trace|traceback|doesn'?t work|"
-               r"does not work|regression|wrong|incorrect)\b"),
-    "feature_request": _rx(r"\b(feature request|would be (nice|great|helpful)|please (add|support)|it would help|"
-                           r"add (a|an|support)|support for|could you add|wish)\b"),
-    "question": _rx(r"(\bhow (do|can|to|does)\b|\bis it possible\b|\bwhat is\b|\bwhy does\b|\?\s*$)"),
-    "docs": _rx(r"\b(docs?|documentation|readme|typo in the docs)\b"),
+    "bug": _rx(r"\b(crash\w*|errors?|exception|broken|fails?|failing|50[0-4]|stack ?trace|traceback|doesn'?t work|"
+               r"does not work|regression|wrong|incorrect|slow|hangs?|hanging|freez\w*|times? out|timeouts?|"
+               r"not working|stopped working|stuck|blank|does nothing|nothing happens|leak\w*)\b"),
+    "feature_request": _rx(r"(\b(feature request|would be (nice|great|helpful)|please (add|support)|it would help|"
+                           r"add (a|an|support)|support for|could you add|wish|would love|option to|ability to)\b|"
+                           r"^\s*(feature:|(add|support|allow|let|enable)\b))"),
+    "question": _rx(r"(\bhow (do|can|to|does)\b|\bis it possible\b|\bwhat is\b|\bwhy does\b|\bis there\b|"
+                    r"\b(can|do) (i|we|you)\b|\?\s*$)"),
+    "docs": _rx(r"\b(docs?|documentation|readme|typo in the docs|tutorial|guide|docstrings?|changelog|spelling)\b"),
     "support": _rx(r"\b(log ?in|account|password reset|billing|refund|can'?t access|cannot access|my order|"
-                   r"subscription|invoice)\b"),
-    "duplicate_or_noise": _rx(r"(^\s*(\+1|same here|bump|test|asdf)\s*$|\bduplicate of\b)"),
+                   r"subscription|invoice|charged|billed|locked out|my (plan|trial|workspace|payment))\b"),
+    "duplicate_or_noise": _rx(r"(^\s*(\+1|\+\+|same here|same issue|same|me too|bump(ing)?( this)?|"
+                              r"any (update|news)( on this)?|test( issue)?|testing|asdf|qwerty|following|this|hello)"
+                              r"[\s!.?]*$|\b(duplicate of|dupe? of)\b|^\W*$)"),
 }
 SEVERITY_WORDS = {
     "sev1_outage": _rx(r"\b(outage|site is down|is down for|all users|every(one| user)|data loss|production down|"
@@ -1172,8 +1177,8 @@ def decide(preset, F, item, routes=None, router=None):
         scores = _text_scores(ISSUE_WORDS, text)
         if F.err_general or F.err_ai:
             scores["bug"] = scores.get("bug", 0) + 3
-        if len(text.split()) < 4:
-            scores["duplicate_or_noise"] = scores.get("duplicate_or_noise", 0) + 2
+        if len(text.split()) < 4 and not any(v for k, v in scores.items() if k != "duplicate_or_noise"):
+            scores["duplicate_or_noise"] = scores.get("duplicate_or_noise", 0) + 2  # short, and nothing else fits
         d = from_scores(scores, smooth=0.12)
         return C(d, HINT) if d else None
 
