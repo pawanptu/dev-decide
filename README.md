@@ -4,6 +4,35 @@ dev-decide is a Jev-style decision engine for software and AI work: a Claude Cod
 an HTTP API and an opt-in routing hook. It answers typed questions (route this request, triage this issue, rate
 this diff) locally in milliseconds when it can, asks Claude when it can't, and learns from every answer.
 
+## Install (as a Claude Code plugin)
+
+In Claude Code:
+
+```
+/plugin marketplace add pawanptu/dev-decide
+/plugin install dev-decide@dev-decide
+```
+
+Then use it in any repository, for example `/dev-decide pr :: DIFF` or `/dev-decide triage :: <paste an issue>`.
+
+- **Your own key.** Nothing here uses anyone else's credentials. By default it asks Claude through your own Claude
+  Code sign-in. To use the API instead, set `ANTHROPIC_API_KEY` in your shell. Never commit the key.
+- **Needs** Python 3.8+ and git on your PATH as `python3` (on Windows with only `py`, use the clone install below), and Git Bash or WSL on Windows.
+- **Local models.** Without any setup it answers many things from rules and asks Claude for the rest. To add the
+  pretrained starting models, see `setup_deploy.md` Step 6.
+
+**Install from a clone instead** (also adds the optional routing hook, and works when only `py` exists on Windows):
+
+```
+git clone https://github.com/pawanptu/dev-decide
+python3 dev-decide/dev-decide-v5/install.py              # add --router-hook for the routing hint
+```
+
+**Maintainers:** the engine lives in `dev-decide-v5/skill/`. After changing it, run `python3 tools/sync.py` to copy it
+into `plugin/` and `dev-decide-server/`.
+
+## What is in this repo
+
 - **`dev-decide-v5/`**: the engine, with its bundled meaning model (30 MB, MIT). Install it in place of 3.x or
   4.x; your logs, models and labels are kept.
 - **`dev-decide-kit/`**: optional. It bootstraps labeled data with Claude and trains starting models. It ships
