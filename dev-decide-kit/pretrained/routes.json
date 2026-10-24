@@ -1,0 +1,10 @@
+{"routes": [
+ {"name": "backend-reviewer", "kind": "agent", "description": "Senior backend reviewer for API design, database queries, error handling and service performance"},
+ {"name": "db-migrate", "kind": "skill", "description": "Write and review database schema migrations safely (Prisma, Alembic, Django, raw SQL)"},
+ {"name": "frontend-dev", "kind": "agent", "description": "Build and fix React and Next.js UI components, styling, accessibility and client state"},
+ {"name": "debugger", "kind": "agent", "description": "Diagnose crashes, failing tests, stack traces and production errors to find the root cause"},
+ {"name": "security-auditor", "kind": "agent", "description": "Review code for vulnerabilities: injection, auth flaws, leaked secrets, unsafe dependencies"},
+ {"name": "test-writer", "kind": "skill", "description": "Write unit, integration and end-to-end tests and improve coverage"},
+ {"name": "devops-deploy", "kind": "skill", "description": "CI/CD pipelines, Docker, Kubernetes, Terraform and deployment rollouts"},
+ {"name": "docs-writer", "kind": "skill", "description": "Write and update READMEs, API docs, docstrings and changelogs"}
+]}
