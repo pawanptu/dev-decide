@@ -42,7 +42,7 @@ MIN_TOKEN = 16
 LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
 
 
-def make_handler(cwd, token=None):
+def make_handler(cwd, token=None, local_only=True):
     secret = token.encode("utf-8") if token else None
 
     class Handler(BaseHTTPRequestHandler):
@@ -62,7 +62,22 @@ def make_handler(cwd, token=None):
         def log_message(self, fmt, *args):
             sys.stderr.write("dev-decide %s\n" % (fmt % args))
 
+        def _same_machine(self):
+            """Without a token, refuse browsers acting for other websites (DNS rebinding, cross-site POSTs)."""
+            if secret is not None or not local_only:
+                return True
+            host = (self.headers.get("Host") or "").rsplit(":", 1)[0].strip("[]").lower()
+            origin = self.headers.get("Origin")
+            if host not in LOCAL_HOSTS:
+                return False
+            if origin:
+                o = origin.split("://", 1)[-1].rsplit(":", 1)[0].strip("[]").lower()
+                return o in LOCAL_HOSTS
+            return True
+
         def _authorized(self):
+            if not self._same_machine():
+                return False
             if secret is None:
                 return True
             sent = (self.headers.get("X-Dev-Decide-Token") or "").strip()
@@ -161,7 +176,7 @@ def main():
         inputs.REFS = False  # remote callers must not read this machine's files; they send "diff" instead
 
     cwd = str(Path(args.cwd).resolve())
-    httpd = ThreadingHTTPServer((args.host, args.port), make_handler(cwd, token))
+    httpd = ThreadingHTTPServer((args.host, args.port), make_handler(cwd, token, local))
     sys.stderr.write("dev-decide %s listening on http://%s:%d (repo: %s; %s; file references %s)\n"
                      % (dd.VERSION, args.host, args.port, cwd,
                         "token required" if token else "no authentication",

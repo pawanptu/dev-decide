@@ -47,8 +47,10 @@ def _num(s):
         v = float(s.rstrip("%"))
     except ValueError:
         return None
-    if pct or 1.0 < v <= 100.0:
+    if pct or 2.0 <= v <= 100.0:
         v = v / 100.0
+    elif 1.0 < v < 2.0:
+        v = 1.0  # a slightly-over-1 probability is a rounding slip, not 1.5%
     return v
 
 
@@ -429,7 +431,10 @@ def eval_gate(gate, answers, warnings):
             warnings.append("gate: %s" % exc)
     required = gate.get("requires") or []
     missing = [k for k in required if not isinstance(answers.get(k), dict) or "error" in answers[k]]
-    uncertain = [k for k in required if isinstance(answers.get(k), dict) and answers[k].get("abstain")]
+    used = set(re.findall(r"([A-Za-z0-9_\-]+)\.(?:score|level|p_true|confidence|margin|choice)",
+                          " ".join((gate.get("block") or []) + (gate.get("review") or []))))
+    uncertain = [k for k in list(required) + sorted(used - set(required))
+                 if isinstance(answers.get(k), dict) and answers[k].get("abstain")]
     if fired_block:
         verdict = "block"
     elif fired_review or missing or uncertain:

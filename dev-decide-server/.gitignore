@@ -1,0 +1,7 @@
+.env
+__pycache__/
+*.pyc
+repo/.claude/dev-decide/cache/
+repo/.claude/dev-decide/learn/
+repo/.claude/dev-decide/*.jsonl
+repo/.claude/dev-decide/last.json

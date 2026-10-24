@@ -1,0 +1,12 @@
+{
+  "notes": [
+    "This repo is dev-decide itself: a Python standard-library decision engine plus a training kit."
+  ],
+  "critical_paths": {
+    "dev-decide-v5/skill/scripts/serve.py": 4,
+    "dev-decide-v5/install.py": 3,
+    "dev-decide-v5/skill/scripts/finalize.py": 3
+  },
+  "thresholds": {"default": 0.6, "severity": 0.7},
+  "backend": "auto"
+}

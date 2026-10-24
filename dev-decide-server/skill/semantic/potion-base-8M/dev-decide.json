@@ -1,0 +1,21 @@
+{
+ "v": 1,
+ "unk": "[UNK]",
+ "prefix": "##",
+ "max_chars": 100,
+ "lowercase": true,
+ "strip_accents": true,
+ "clean_text": true,
+ "chinese": true,
+ "specials": [
+  "[PAD]",
+  "[UNK]",
+  "[CLS]",
+  "[SEP]",
+  "[MASK]"
+ ],
+ "median_token_length": 6,
+ "max_length": 512,
+ "normalize": true,
+ "vocab_size": 29528
+}

@@ -22,7 +22,7 @@ MAX_CURRENT_BYTES = 300000
 MAX_UNTRACKED = 50
 MAX_UNTRACKED_BYTES = 200000
 REF = re.compile(r"(?<!\S)(DIFF(?:\s+--staged)?|COMMIT\s+([0-9A-Za-z_./~^@{}-]{1,80})|@([^\s]+))(?!\S)")
-SAFE_REV = re.compile(r"^[0-9A-Za-z_./~^@{}-]{1,80}$")
+SAFE_REV = re.compile(r"^[0-9A-Za-z_./~^@{}][0-9A-Za-z_./~^@{}-]{0,79}$")  # no leading "-": it would be a git option
 
 
 class FileChange(object):
@@ -133,7 +133,8 @@ def _untracked_as_diff(root):
         return ""
     chunks, total = [], 0
     # Untracked files under .claude/ are tool configuration (for example a freshly installed skill), not the change.
-    paths = [p for p in listing.splitlines() if not p.startswith(".claude/")]
+    paths = [p for p in listing.splitlines()
+             if not p.startswith(".claude/") and "__pycache__/" not in p and not p.endswith((".pyc", ".pyo"))]
     for rel in paths[:MAX_UNTRACKED]:
         p = Path(root) / rel
         try:

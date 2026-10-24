@@ -279,7 +279,7 @@ def norm_path(p, root=None):
 def frontmatter(path):
     """Minimal YAML frontmatter reader: top-level `key: value` and folded blocks."""
     try:
-        with open(path, encoding="utf-8", errors="replace") as f:
+        with open(path, encoding="utf-8-sig", errors="replace") as f:  # -sig: a BOM must not hide the "---"
             text = f.read(20000)
     except Exception:
         return {}
