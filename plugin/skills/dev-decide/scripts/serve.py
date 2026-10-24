@@ -101,7 +101,7 @@ def make_handler(cwd, token=None, local_only=True):
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(page)))
                 self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; "
-                                 "script-src 'unsafe-inline'; connect-src 'self'")
+                                 "script-src 'unsafe-inline'; img-src data:; connect-src 'self'")
                 self.send_header("X-Content-Type-Options", "nosniff")
                 self.end_headers()
                 self.wfile.write(page)
