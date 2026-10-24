@@ -17,9 +17,14 @@ Then use it in any repository, for example `/dev-decide pr :: DIFF` or `/dev-dec
 
 - **Your own key.** Nothing here uses anyone else's credentials. By default it asks Claude through your own Claude
   Code sign-in. To use the API instead, set `ANTHROPIC_API_KEY` in your shell. Never commit the key.
-- **Needs** Python 3.8+ and git on your PATH as `python3` (on Windows with only `py`, use the clone install below), and Git Bash or WSL on Windows.
-- **Local models.** Without any setup it answers many things from rules and asks Claude for the rest. To add the
-  pretrained starting models, see `setup_deploy.md` Step 6.
+- **Needs** Python 3.8+ and git on your PATH as `python3` (on Windows with only `py`, use the clone install below),
+  and Git Bash or WSL on Windows.
+- **Starter models are built in.** The first time it runs in a repository it copies in pretrained models
+  (`skill/starter-models/`, 2.6 MB), so `issue_type` is answered locally from day one. The other models switch on by
+  themselves once they have learned enough from your use. A repository that already has models is never overwritten.
+- **Routing hint hook is included.** On each prompt it checks, locally and in about 70 ms, whether one of your agents or
+  skills clearly matches, and only then adds a one-line hint. It never calls a model and never blocks a prompt. To
+  turn it off, put `{"router_hook": {"enabled": false}}` in `.claude/dev-decide.json`, or disable the plugin's hooks.
 
 **Install from a clone instead** (also adds the optional routing hook, and works when only `py` exists on Windows):
 
@@ -76,3 +81,7 @@ python3 dev-decide-kit/kit.py export --data dev-decide-kit/pretrained --repo /pa
 `setup_deploy.md` has the full steps, including deployment. Then use it. In Claude Code: `/dev-decide route :: <task>`, `/dev-decide triage :: <issue>`,
 `/dev-decide fix last issue_type=bug`, `/dev-decide status`. `dev-decide-v5/README.md` has the details
 ("5.0 measurements", "The learning loop"); `dev-decide-kit/README.md` covers training your own.
+
+## Licence
+
+MIT. See `LICENSE`. The bundled meaning model (potion-base-8M) is MIT licensed too; see its `NOTICE`.

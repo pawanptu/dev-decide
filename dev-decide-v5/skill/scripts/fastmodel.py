@@ -343,12 +343,36 @@ def _signature(*paths):
     return tuple(sig)
 
 
+def seed_models(root):
+    """First use in a repository: copy the starter models shipped with the skill (skill/starter-models/).
+
+    Only when the repository has no models yet, so what it has learned or trained is never overwritten.
+    """
+    src = dd.SKILL_DIR / "starter-models"
+    if not (src / "index.json").is_file():
+        return
+    try:
+        import shutil
+        dest = dd.state_dir(root) / "models"  # state_dir also writes the folder's .gitignore
+        dest.mkdir(parents=True, exist_ok=True)
+        if (dest / "index.json").exists():
+            return
+        for f in sorted(src.iterdir()):
+            if f.is_file() and f.name != "index.json":
+                shutil.copy2(str(f), str(dest / f.name))
+        shutil.copy2(str(src / "index.json"), str(dest / "index.json"))  # last: its presence means "complete"
+    except OSError:
+        pass
+
+
 class Registry(object):
     """Loads only the enabled models for the presets a request asks about."""
 
     def __init__(self, root):
         self.dir = Path(root) / ".claude" / "dev-decide" / "models"
         ipath = self.dir / "index.json"
+        if not ipath.exists():
+            seed_models(root)
         sig = _signature(ipath)
         hit = _LOADED.get(str(ipath))
         if hit and hit[0] == sig:

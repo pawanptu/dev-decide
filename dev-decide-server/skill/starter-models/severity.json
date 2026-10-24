@@ -1,0 +1,1 @@
+{"classes": ["not_a_problem", "sev1_outage", "sev2_major", "sev3_minor", "sev4_cosmetic"], "kind": "choose", "bias": [0.5399177210437566, -0.4001361794544465, 0.11577721615221177, 0.6520577012828644, -0.9076164590243828], "temperature": 0.3098020999597399, "threshold": 0.7027429388825747, "featurizer": "f1", "format": "bin1"}

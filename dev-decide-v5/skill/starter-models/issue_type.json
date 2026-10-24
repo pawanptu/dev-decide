@@ -1,0 +1,1 @@
+{"classes": ["bug", "docs", "duplicate_or_noise", "feature_request", "question", "support"], "kind": "choose", "bias": [1.7575036889920816, -0.8494476207091315, -1.4855457268305727, 0.9308919083901144, 0.5185846967937146, -0.8719869466362916], "temperature": 0.47079899981570916, "threshold": 0.6, "featurizer": "f1", "format": "bin1"}

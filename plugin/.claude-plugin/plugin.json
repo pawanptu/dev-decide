@@ -5,5 +5,6 @@
   "author": {"name": "pawanptu", "url": "https://github.com/pawanptu"},
   "homepage": "https://github.com/pawanptu/dev-decide",
   "repository": "https://github.com/pawanptu/dev-decide",
+  "license": "MIT",
   "keywords": ["decision", "triage", "pull-request", "risk", "routing", "gates"]
 }

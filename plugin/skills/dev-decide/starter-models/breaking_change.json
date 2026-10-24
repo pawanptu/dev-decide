@@ -1,0 +1,1 @@
+{"classes": ["false", "true"], "kind": "verify", "bias": [0.0, -0.18787268037597674], "temperature": 0.27910791745943525, "threshold": 0.7844680380733748, "featurizer": "f1", "format": "bin1"}
