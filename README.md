@@ -22,6 +22,11 @@ Then use it in any repository, for example `/dev-decide pr :: DIFF` or `/dev-dec
 - **Starter models are built in.** The first time it runs in a repository it copies in pretrained models
   (`skill/starter-models/`, 2.6 MB), so `issue_type` is answered locally from day one. The other models switch on by
   themselves once they have learned enough from your use. A repository that already has models is never overwritten.
+- **One settings file you can edit.** The first time it runs in a git repository it writes `.claude/dev-decide.json`
+  with every setting at its default and a `_help` section that explains each one (what to ask Claude with, how
+  risky paths are rated, learning, the routing hook, your own questions and gates). Edit it and save; changes apply
+  on the next run. Commit it to share settings with your team. It never overwrites a file you already have. Its
+  values override your personal `~/.claude/dev-decide.json`, so delete a setting there if you want yours to win.
 - **Routing hint hook is included.** On each prompt it checks, locally and in about 70 ms, whether one of your agents or
   skills clearly matches, and only then adds a one-line hint. It never calls a model and never blocks a prompt. To
   turn it off, put `{"router_hook": {"enabled": false}}` in `.claude/dev-decide.json`, or disable the plugin's hooks.

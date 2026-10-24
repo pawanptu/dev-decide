@@ -148,6 +148,23 @@ def policy_path(root):
     return Path(root) / ".claude" / "dev-decide.json"
 
 
+def seed_policy(root):
+    """First use in a git repository: write .claude/dev-decide.json with every setting at its default.
+
+    It is a normal project file, meant to be edited and committed. Never overwrites an existing one, and never
+    runs outside a git repository (so no stray files in a home folder or a scratch directory).
+    """
+    src = SKILL_DIR / "policy.default.json"
+    dest = policy_path(root)
+    try:
+        if dest.exists() or not src.is_file() or not (Path(root) / ".git").exists():
+            return
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(src.read_bytes())
+    except OSError:
+        pass
+
+
 def load_policy(root):
     """User policy (~/.claude/dev-decide.json) overlaid by project policy (.claude/dev-decide.json)."""
     user = read_json(home_claude() / "dev-decide.json")

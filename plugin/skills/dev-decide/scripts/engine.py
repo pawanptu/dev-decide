@@ -211,6 +211,7 @@ def decide(text=None, spec=None, cwd=None, extra_flags=(), use_cache=True):
     t0 = time.perf_counter()
     cwd = str(cwd or os.getcwd())
     root = dd.project_root(cwd)
+    dd.seed_policy(root)
     policy = dd.load_policy(root)
     cat = dd.load_catalog(policy)
     req = request.parse_spec(spec, cat) if spec is not None else request.parse_text(text, cat)
