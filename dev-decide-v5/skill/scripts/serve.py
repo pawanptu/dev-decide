@@ -95,6 +95,16 @@ def make_handler(cwd, token=None, local_only=True):
             path = self.path.split("?", 1)[0].rstrip("/")
             if path == "/health":
                 self._send(200, {"ok": True, "version": dd.VERSION})
+            elif path in ("", "/ui"):  # the page holds no data; every call it makes still needs the token
+                page = (dd.SKILL_DIR / "ui.html").read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(page)))
+                self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; "
+                                 "script-src 'unsafe-inline'; connect-src 'self'")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.end_headers()
+                self.wfile.write(page)
             elif not self._authorized():
                 self._deny()
             elif path == "/v1/learning":

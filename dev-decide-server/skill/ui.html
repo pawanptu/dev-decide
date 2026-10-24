@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dev-decide</title>
+<style>
+  :root { --bg:#fff; --fg:#1b1f24; --muted:#5b6672; --line:#d8dee4; --accent:#2457d6; --card:#f6f8fa;
+          --pass:#1a7f37; --review:#9a6700; --block:#cf222e; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f1318; --fg:#e6edf3; --muted:#9aa7b4; --line:#2b333c; --accent:#6c9bff; --card:#161c23;
+            --pass:#3fb950; --review:#d29922; --block:#f85149; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif; }
+  main { max-width:860px; margin:0 auto; padding:24px 16px 64px; }
+  h1 { font-size:22px; margin:0 0 2px; }
+  .sub { color:var(--muted); margin:0 0 20px; }
+  label { display:block; font-weight:600; margin:14px 0 4px; }
+  input, select, textarea { width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:6px;
+                            background:var(--card); color:var(--fg); font:inherit; }
+  textarea { min-height:130px; resize:vertical; font-family:ui-monospace,Consolas,monospace; font-size:13px; }
+  .row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  @media (max-width:560px) { .row { grid-template-columns:1fr; } }
+  .hint { color:var(--muted); font-size:13px; margin-top:3px; }
+  button { margin-top:16px; padding:9px 18px; border:0; border-radius:6px; background:var(--accent); color:#fff;
+           font:inherit; font-weight:600; cursor:pointer; }
+  button:disabled { opacity:.6; cursor:wait; }
+  #out { margin-top:24px; }
+  .summary { padding:12px 14px; border:1px solid var(--line); border-radius:8px; background:var(--card); }
+  .gate { display:inline-block; padding:2px 10px; border-radius:99px; color:#fff; font-weight:700; margin:0 6px 6px 0; }
+  .gate.pass { background:var(--pass); } .gate.review { background:var(--review); } .gate.block { background:var(--block); }
+  table { width:100%; border-collapse:collapse; margin-top:14px; }
+  th, td { text-align:left; padding:7px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:600; font-size:13px; }
+  .low { color:var(--review); font-weight:600; }
+  .err { color:var(--block); }
+  details { margin-top:14px; } pre { overflow:auto; background:var(--card); padding:10px; border-radius:6px; font-size:12px; }
+  .bar { height:6px; background:var(--line); border-radius:3px; min-width:60px; }
+  .bar i { display:block; height:100%; background:var(--accent); border-radius:3px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>dev-decide</h1>
+  <p class="sub">Typed, calibrated decisions for software and AI work. Answers locally in milliseconds when it can, asks Claude when it can't.</p>
+
+  <label for="token">Access token</label>
+  <input id="token" type="password" autocomplete="off" placeholder="Your DEV_DECIDE_TOKEN">
+  <div class="hint">Kept only in this browser tab (session storage). Never sent anywhere except this server.</div>
+
+  <div class="row">
+    <div>
+      <label for="q">What to decide</label>
+      <select id="q">
+        <option value="triage">triage: an issue or bug report</option>
+        <option value="pr">pr: a pull request diff (needs the diff box)</option>
+        <option value="route">route: which agent or skill fits a request</option>
+        <option value="plan">plan: a task to be planned</option>
+        <option value="incident">incident: an error or outage</option>
+        <option value="deploy">deploy: a change about to ship</option>
+        <option value="issue_type">issue_type only</option>
+        <option value="severity">severity only</option>
+        <option value="risk">risk only</option>
+      </select>
+    </div>
+    <div>
+      <label for="mode">How to answer</label>
+      <select id="mode">
+        <option value="local">local only: free, instant</option>
+        <option value="hybrid">hybrid: ask Claude when unsure</option>
+        <option value="llm">always ask Claude</option>
+      </select>
+    </div>
+  </div>
+
+  <label for="state">Text</label>
+  <textarea id="state" placeholder="Paste an issue, a request, an error log..."></textarea>
+
+  <label for="diff">Diff (optional, for pr)</label>
+  <textarea id="diff" placeholder="Paste a unified diff (the output of git diff)"></textarea>
+
+  <button id="go">Decide</button>
+  <div id="out" aria-live="polite"></div>
+</main>
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var store = { get: function (k) { try { return sessionStorage.getItem(k) || ""; } catch (e) { return ""; } },
+                set: function (k, v) { try { sessionStorage.setItem(k, v); } catch (e) {} } };
+  $("token").value = store.get("dd_token");
+
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text !== undefined) n.textContent = text;
+    return n;
+  }
+
+  function show(data, status) {
+    var out = $("out"); out.textContent = "";
+    if (data.error && !data.answers) {
+      out.appendChild(el("p", "err", (status === 401 ? "Wrong or missing token. " : "") + data.error));
+      return;
+    }
+    var box = el("div", "summary");
+    var gates = data.gates || {};
+    Object.keys(gates).forEach(function (g) {
+      var v = gates[g].verdict;
+      box.appendChild(el("span", "gate " + v, g + ": " + v.toUpperCase()));
+      (gates[g].fired || []).forEach(function (f) { box.appendChild(el("div", "hint", "rule fired: " + f)); });
+    });
+    box.appendChild(el("div", "", data.summary || ""));
+    out.appendChild(box);
+
+    var t = el("table"), head = el("tr");
+    ["Question", "Answer", "Confidence", "Source"].forEach(function (h) { head.appendChild(el("th", "", h)); });
+    t.appendChild(head);
+    var answers = data.answers || {};
+    Object.keys(answers).forEach(function (k) {
+      var a = answers[k], tr = el("tr");
+      tr.appendChild(el("td", "", k));
+      if (a.error) {
+        var c = el("td", "err", a.error); c.colSpan = 3; tr.appendChild(c);
+      } else {
+        var val = a.type === "choose" ? a.choice : a.type === "score" ? String(a.score) : (a.verdict ? "yes" : "no") + " (p=" + a.p_true + ")";
+        tr.appendChild(el("td", a.abstain ? "low" : "", val + (a.abstain ? "  (unsure)" : "")));
+        var conf = el("td"); conf.appendChild(el("div", "", (a.confidence * 100).toFixed(0) + "%"));
+        var bar = el("div", "bar"), fill = el("i"); fill.style.width = (a.confidence * 100) + "%";
+        bar.appendChild(fill); conf.appendChild(bar); tr.appendChild(conf);
+        tr.appendChild(el("td", "", a.via || ""));
+      }
+      t.appendChild(tr);
+    });
+    out.appendChild(t);
+    var d = el("details"); d.appendChild(el("summary", "", "Raw JSON"));
+    d.appendChild(el("pre", "", JSON.stringify(data, null, 2))); out.appendChild(d);
+  }
+
+  $("go").addEventListener("click", function () {
+    var token = $("token").value.trim(), state = $("state").value.trim(), diff = $("diff").value.trim();
+    var out = $("out"); out.textContent = "";
+    if (!token) { out.appendChild(el("p", "err", "Enter your access token first.")); return; }
+    if (!state && !diff) { out.appendChild(el("p", "err", "Add some text or a diff to decide about.")); return; }
+    store.set("dd_token", token);
+    var body = { questions: [$("q").value], mode: $("mode").value, why: false };
+    if (state) body.state = state;
+    if (diff) body.diff = diff;
+    var btn = $("go"); btn.disabled = true; btn.textContent = "Deciding...";
+    var status = 0;
+    fetch("/v1/decide", { method: "POST", headers: { "Authorization": "Bearer " + token, "Content-Type": "application/json" },
+                          body: JSON.stringify(body) })
+      .then(function (r) { status = r.status; return r.json(); })
+      .then(function (data) { show(data, status); })
+      .catch(function () { out.appendChild(el("p", "err", "Could not reach the server. If it was asleep, wait a minute and try again.")); })
+      .then(function () { btn.disabled = false; btn.textContent = "Decide"; });
+  });
+})();
+</script>
+</body>
+</html>
