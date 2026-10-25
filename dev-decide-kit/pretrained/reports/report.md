@@ -1,6 +1,6 @@
 # dev-decide-kit benchmark
 
-Trained 2026-10-25 07:36:07. Teacher: haiku writes, sonnet labels. Bootstrap: 244 model calls, about $3.81 of usage.
+Trained 2026-10-25 07:36:07. Teacher: haiku writes, sonnet labels. Bootstrap: 391 model calls, about $10.91 of usage.
 
 Accuracy means agreement with the teacher's labels on examples the model never saw, unless a decision says its test set is human gold labels. *CV* is 5-fold cross-validation on the development set; *test* is a separate held-out split that no choice ever looked at.
 
@@ -8,9 +8,9 @@ Accuracy means agreement with the teacher's labels on examples the model never s
 
 | Decision | Model | CV accuracy | Test accuracy (95% CI) | Majority baseline | ECE raw → calibrated (noise floor) | Auto-accept at 90% target (test) | Model p50 / p99 | Size | Status |
 |---|---|---|---|---|---|---|---|---|---|
-| route | f4, C=16 | 84.9% | 90.6% (80%–96%) | 11% | 0.287 → 0.064 (0.086) | 91% answered, 94% right | 973 µs / 1.89 ms | 718 KB | **enabled** |
+| route | f3, C=4, balanced | 86.0% | 87.7% (78%–94%) | 27% | 0.377 → 0.059 (0.081) | 85% answered, 95% right | 1.70 ms / 3.58 ms | 736 KB | **enabled** |
 | risk | f2, C=64 | 46.8% | 68.2% (47%–84%) | 30% | 0.267 → 0.196 (0.219) | 9% answered, 100% right | 573 µs / 1.85 ms | 272 KB | not enabled |
-| breaking_change | f1, C=1, balanced | 73.4% | 63.2% (41%–81%) | 68% | 0.068 → 0.191 (0.198) | 37% answered, 71% right | 152 µs / 408 µs | 65 KB | not enabled |
+| breaking_change | f1, C=64, balanced | 78.8% | 76.0% (65%–84%) | 68% | 0.133 → 0.138 (0.097) | 57% answered, 91% right | 147 µs / 403 µs | 205 KB | **enabled** |
 | issue_type | f2, C=64, balanced | 90.6% | 95.3% (91%–98%) | 20% | 0.106 → 0.041 (0.047) | 93% answered, 96% right | 242 µs / 481 µs | 633 KB | **enabled** |
 | severity | f1, C=64 | 70.9% | 73.2% (65%–80%) | 49% | 0.108 → 0.086 (0.089) | 46% answered, 98% right | 67 µs / 164 µs | 308 KB | **enabled** |
 | domain | f4, C=64, balanced | 78.0% | 80.2% (72%–87%) | 4% | 0.198 → 0.058 (0.070) | 70% answered, 92% right | 1.42 ms / 2.15 ms | 2936 KB | **enabled** |
@@ -21,10 +21,10 @@ Ordered labels: risk is within one level 82% of the time on test (MAE 0.59 level
 
 | Path | Latency for one decision | Relative to the analyzers + model |
 |---|---|---|
-| This kit, model only (featurize + predict) | 0.41 ms median (0.07–1.42 across decisions) | - |
-| This kit, dev-decide analyzers + model (in-process) | 1.00 ms median (0.30–1.70), worst p99 10.1 ms | 1× |
-| Jev (TypeSafe AI, reported, over the network) | 70–500 ms | 70–501× slower |
-| dev-decide's LLM tier (one Claude call, measured) | 2.5–4.5 s | 2,503–4,505× slower |
+| This kit, model only (featurize + predict) | 0.41 ms median (0.07–1.70 across decisions) | - |
+| This kit, dev-decide analyzers + model (in-process) | 0.99 ms median (0.30–2.25), worst p99 4.3 ms | 1× |
+| Jev (TypeSafe AI, reported, over the network) | 70–500 ms | 71–505× slower |
+| dev-decide's LLM tier (one Claude call, measured) | 2.5–4.5 s | 2,524–4,542× slower |
 
 Latencies are pure-Python inference on one CPU core, in a running process, with no network, and cover the analyzers and the model only. A whole dev-decide request also parses the request, checks the cache and writes the decision log: for dev-decide 3.1 on a 2-core cloud VM, a routing or triage request took about 2 ms in a warm process and about 3 ms through the local HTTP API, and a full pull-request bundle read from git about 11 ms. A new process per call (the command line, the router hook) also pays Python start-up and first-use pattern compilation, about 55–80 ms, which is roughly Jev's best case. Jev is a general model and these are narrow models trained for one decision each, so compare accuracy only within this report.
 
@@ -38,77 +38,77 @@ The winner is refit on the whole development set. Every test number comes from t
 
 ## route
 
-Data: 351 usable of 360 examples in the route family (360 near-duplicate groups). Writer and blind labeler agreed on 97.5% of 360. Development set 298, test set 53 (held-out teacher labels).
+Data: 428 usable of 437 examples in the route family (437 near-duplicate groups). Writer and blind labeler agreed on 97.5% of 360. Development set 363, test set 65 (held-out teacher labels).
 
-Winner: f4, C=16, class weight none, temperature 0.45, 18391 weights, 718 KB. Selection: 40 of 40 candidates passed calibration; 13 tied within one standard error (2.0 points).
+Winner: f3, C=4, class weight balanced, temperature 0.28, 18851 weights, 736 KB. Selection: 34 of 40 candidates passed calibration; 12 tied within one standard error (1.8 points).
 
-Cross-validated: accuracy 84.9%, macro-F1 0.846, ECE 0.076 (noise floor 0.045), log-loss 0.427, AURC 0.033.
+Cross-validated: accuracy 86.0%, macro-F1 0.841, ECE 0.051 (noise floor 0.039), log-loss 0.428, AURC 0.035.
 
-Test: accuracy 90.6% (95% CI 79.7%–95.9%) against a majority baseline of 11.4%, macro-F1 0.901, ECE 0.064 (uncalibrated 0.287, noise floor 0.086), Brier 0.161, AURC 0.015.
+Test: accuracy 87.7% (95% CI 77.5%–93.6%) against a majority baseline of 27.3%, macro-F1 0.854, ECE 0.059 (uncalibrated 0.377, noise floor 0.081), Brier 0.164, AURC 0.019.
 
-Auto-accept: confidence ≥ 0.60. In cross-validation that answered 87.2% of inputs at 92.7% accuracy; on test it answered 90.6% (48 inputs) at 93.8% accuracy (95% CI 83.2%–97.9%). Everything below the threshold falls through to the LLM tier.
+Auto-accept: confidence ≥ 0.60. In cross-validation that answered 86.0% of inputs at 92.9% accuracy; on test it answered 84.6% (55 inputs) at 94.5% accuracy (95% CI 85.1%–98.1%). Everything below the threshold falls through to the LLM tier.
 
 Status: enabled. Accepted answers reach the target on held-out data.
 
 | Featurizer | Best CV accuracy | Its CV ECE | Featurize p50 | Features |
 |---|---|---|---|---|
-| f1 | 80.5% | 0.064 | 132 µs | 9732 |
-| f2 | 83.9% | 0.080 | 237 µs | 18135 |
-| f3 | 85.9% | 0.049 | 446 µs | 18391 |
-| f4 | 84.9% | 0.076 | 421 µs | 18391 |
+| f1 | 82.4% | 0.077 | 61 µs | 10078 |
+| f2 | 84.3% | 0.063 | 189 µs | 18595 |
+| f3 | 86.0% | 0.051 | 615 µs | 18851 |
+| f4 | 85.1% | 0.036 | 900 µs | 18851 |
 
-Most common test confusions: backend-reviewer → frontend-dev (1); backend-reviewer → debugger (1); security-auditor → test-writer (1); devops-deploy → debugger (1); docs-writer → devops-deploy (1).
+Most common test confusions: debugger → none (2); backend-reviewer → frontend-dev (1); backend-reviewer → debugger (1); security-auditor → test-writer (1); devops-deploy → debugger (1).
 
 <details><summary>All 40 candidates (cross-validated)</summary>
 
 | Featurizer | C | Class weight | Accuracy | ECE | Noise floor | Log-loss |
 |---|---|---|---|---|---|---|
-| f3 | 4 | none | 86.6% | 0.032 | 0.043 | 0.418 |
-| f3 | 1 | balanced | 86.6% | 0.037 | 0.044 | 0.434 |
-| f3 | 4 | balanced | 86.2% | 0.039 | 0.043 | 0.418 |
-| f3 | 16 | balanced | 86.2% | 0.035 | 0.043 | 0.418 |
-| f3 | 64 | balanced | 86.2% | 0.035 | 0.044 | 0.421 |
-| f3 | 16 | none | 85.9% | 0.049 | 0.044 | 0.417 |
-| f3 | 64 | none | 85.9% | 0.048 | 0.043 | 0.419 |
-| f4 | 64 | none | 85.9% | 0.059 | 0.046 | 0.429 |
-| f4 | 64 | balanced | 85.9% | 0.055 | 0.045 | 0.429 |
-| f4 | 16 | balanced | 85.6% | 0.057 | 0.044 | 0.427 |
-| f3 | 0.25 | balanced | 85.6% | 0.053 | 0.048 | 0.475 |
-| f4 | 16 | none | 84.9% | 0.076 | 0.045 | 0.427 |
-| f4 | 4 | balanced | 84.9% | 0.042 | 0.045 | 0.431 |
-| f4 | 4 | none | 84.6% | 0.040 | 0.044 | 0.431 |
-| f2 | 16 | none | 84.6% | 0.061 | 0.051 | 0.583 |
-| f3 | 1 | none | 84.2% | 0.049 | 0.047 | 0.464 |
-| f2 | 4 | balanced | 84.2% | 0.068 | 0.052 | 0.590 |
-| f4 | 1 | balanced | 83.9% | 0.042 | 0.046 | 0.454 |
-| f2 | 64 | balanced | 83.9% | 0.080 | 0.050 | 0.581 |
-| f2 | 16 | balanced | 83.9% | 0.070 | 0.051 | 0.582 |
-| f2 | 64 | none | 83.9% | 0.069 | 0.050 | 0.583 |
-| f4 | 1 | none | 83.6% | 0.055 | 0.048 | 0.464 |
-| f2 | 4 | none | 83.2% | 0.058 | 0.050 | 0.597 |
-| f4 | 0.25 | balanced | 82.6% | 0.047 | 0.049 | 0.522 |
-| f2 | 1 | balanced | 81.9% | 0.078 | 0.053 | 0.622 |
-| f2 | 0.25 | balanced | 80.9% | 0.112 | 0.062 | 0.698 |
-| f1 | 64 | balanced | 80.5% | 0.064 | 0.053 | 0.656 |
-| f1 | 64 | none | 80.2% | 0.068 | 0.054 | 0.657 |
-| f1 | 16 | balanced | 79.9% | 0.056 | 0.055 | 0.660 |
-| f1 | 16 | none | 79.2% | 0.053 | 0.053 | 0.662 |
-| f1 | 4 | balanced | 79.2% | 0.047 | 0.055 | 0.674 |
-| f4 | 0.25 | none | 78.5% | 0.053 | 0.051 | 0.651 |
-| f2 | 1 | none | 78.2% | 0.041 | 0.055 | 0.698 |
-| f1 | 4 | none | 77.2% | 0.041 | 0.055 | 0.685 |
-| f1 | 1 | balanced | 76.8% | 0.047 | 0.057 | 0.721 |
-| f1 | 0.25 | balanced | 76.2% | 0.082 | 0.063 | 0.795 |
-| f3 | 0.25 | none | 73.8% | 0.070 | 0.059 | 0.860 |
-| f1 | 1 | none | 71.5% | 0.040 | 0.060 | 0.808 |
-| f2 | 0.25 | none | 63.4% | 0.075 | 0.066 | 1.241 |
-| f1 | 0.25 | none | 58.1% | 0.061 | 0.069 | 1.326 |
+| f3 | 16 | balanced | 86.2% | 0.049 | 0.040 | 0.430 |
+| f3 | 64 | balanced | 86.2% | 0.056 | 0.040 | 0.435 |
+| f3 | 1 | balanced | 86.2% | 0.053 | 0.040 | 0.448 |
+| f3 | 4 | balanced | 86.0% | 0.051 | 0.039 | 0.428 |
+| f3 | 64 | none | 85.7% | 0.052 | 0.041 | 0.462 |
+| f4 | 1 | balanced | 85.4% | 0.026 | 0.042 | 0.454 |
+| f4 | 16 | none | 85.4% | 0.030 | 0.042 | 0.455 |
+| f3 | 16 | none | 85.4% | 0.059 | 0.042 | 0.470 |
+| f3 | 0.25 | balanced | 85.4% | 0.064 | 0.043 | 0.502 |
+| f4 | 4 | balanced | 85.1% | 0.036 | 0.041 | 0.438 |
+| f4 | 16 | balanced | 84.8% | 0.036 | 0.041 | 0.438 |
+| f4 | 64 | balanced | 84.8% | 0.027 | 0.041 | 0.443 |
+| f4 | 64 | none | 84.3% | 0.045 | 0.041 | 0.455 |
+| f4 | 4 | none | 84.3% | 0.041 | 0.043 | 0.471 |
+| f2 | 16 | balanced | 84.3% | 0.063 | 0.048 | 0.584 |
+| f2 | 64 | balanced | 84.3% | 0.081 | 0.048 | 0.585 |
+| f2 | 4 | balanced | 84.3% | 0.063 | 0.047 | 0.596 |
+| f3 | 4 | none | 83.7% | 0.054 | 0.043 | 0.517 |
+| f4 | 0.25 | balanced | 83.5% | 0.037 | 0.044 | 0.503 |
+| f2 | 64 | none | 82.4% | 0.072 | 0.048 | 0.633 |
+| f1 | 64 | balanced | 82.4% | 0.077 | 0.050 | 0.648 |
+| f1 | 16 | balanced | 81.8% | 0.070 | 0.049 | 0.648 |
+| f4 | 1 | none | 81.0% | 0.048 | 0.047 | 0.586 |
+| f2 | 16 | none | 81.0% | 0.065 | 0.050 | 0.654 |
+| f2 | 1 | balanced | 80.7% | 0.068 | 0.050 | 0.665 |
+| f1 | 64 | none | 80.2% | 0.061 | 0.052 | 0.693 |
+| f1 | 4 | balanced | 79.3% | 0.055 | 0.051 | 0.670 |
+| f2 | 4 | none | 77.7% | 0.080 | 0.053 | 0.753 |
+| f1 | 16 | none | 77.1% | 0.058 | 0.052 | 0.719 |
+| f2 | 0.25 | balanced | 76.9% | 0.057 | 0.052 | 0.753 |
+| f1 | 1 | balanced | 74.7% | 0.051 | 0.052 | 0.758 |
+| f1 | 4 | none | 73.3% | 0.080 | 0.053 | 0.823 |
+| f3 | 1 | none | 72.2% | 0.093 | 0.052 | 0.838 |
+| f1 | 0.25 | balanced | 72.2% | 0.076 | 0.053 | 0.859 |
+| f4 | 0.25 | none | 57.3% | 0.141 | 0.056 | 1.207 |
+| f2 | 1 | none | 55.1% | 0.114 | 0.060 | 1.216 |
+| f1 | 1 | none | 54.3% | 0.124 | 0.060 | 1.268 |
+| f3 | 0.25 | none | 30.0% | 0.250 | 0.062 | 1.619 |
+| f2 | 0.25 | none | 27.3% | 0.232 | 0.058 | 1.799 |
+| f1 | 0.25 | none | 27.3% | 0.212 | 0.058 | 1.806 |
 
 </details>
 
 ## risk
 
-Data: 146 usable of 150 examples in the pr family (150 near-duplicate groups). Writer and blind labeler agreed on 97.3% of 150. Development set 124, test set 22 (held-out teacher labels).
+Data: 146 usable of 150 examples in the pr family (150 near-duplicate groups). Writer and blind labeler agreed on 94.4% of 639. Development set 124, test set 22 (held-out teacher labels).
 
 Winner: f2, C=64, class weight none, temperature 1.37, 11598 weights, 272 KB. Selection: 35 of 40 candidates passed calibration; 14 tied within one standard error (4.5 points).
 
@@ -178,71 +178,71 @@ Most common test confusions: 4 → 1 (2); 2 → 1 (2); 1 → 3 (1); 3 → 1 (1);
 
 ## breaking_change
 
-Data: 128 usable of 150 examples in the pr family (150 near-duplicate groups). Writer and blind labeler agreed on 85.3% of 150. Development set 109, test set 19 (held-out teacher labels).
+Data: 499 usable of 647 examples in the pr family (647 near-duplicate groups). Writer and blind labeler agreed on 78.1% of 639. Development set 424, test set 75 (held-out teacher labels).
 
-Winner: f1, C=1, class weight balanced, temperature 0.28, 5540 weights, 65 KB. Selection: 37 of 40 candidates passed calibration; 8 tied within one standard error (4.1 points).
+Winner: f1, C=64, class weight balanced, temperature 1.42, 17513 weights, 205 KB. Selection: 36 of 40 candidates passed calibration; 15 tied within one standard error (1.9 points).
 
-Cross-validated: accuracy 73.4%, macro-F1 0.693, ECE 0.088 (noise floor 0.087), log-loss 0.525, AURC 0.133.
+Cross-validated: accuracy 78.8%, macro-F1 0.744, ECE 0.033 (noise floor 0.041), log-loss 0.438, AURC 0.085.
 
-Test: accuracy 63.2% (95% CI 41.0%–80.9%) against a majority baseline of 67.9%, macro-F1 0.591, ECE 0.191 (uncalibrated 0.068, noise floor 0.198), Brier 0.469, AURC 0.252, AUROC 0.641.
+Test: accuracy 76.0% (95% CI 65.2%–84.2%) against a majority baseline of 68.4%, macro-F1 0.711, ECE 0.138 (uncalibrated 0.133, noise floor 0.097), Brier 0.312, AURC 0.108, AUROC 0.814.
 
-Auto-accept: confidence ≥ 0.78. In cross-validation that answered 45.9% of inputs at 90.0% accuracy; on test it answered 36.8% (7 inputs) at 71.4% accuracy (95% CI 35.9%–91.8%). Everything below the threshold falls through to the LLM tier.
+Auto-accept: confidence ≥ 0.80. In cross-validation that answered 58.5% of inputs at 90.3% accuracy; on test it answered 57.3% (43 inputs) at 90.7% accuracy (95% CI 78.4%–96.3%). Everything below the threshold falls through to the LLM tier.
 
-Status: not enabled. Only 7 confident test answers, too few to verify the threshold (need 10).
+Status: enabled. Accepted answers reach the target on held-out data.
 
 | Featurizer | Best CV accuracy | Its CV ECE | Featurize p50 | Features |
 |---|---|---|---|---|
-| f1 | 73.4% | 0.088 | 117 µs | 5540 |
-| f2 | 74.3% | 0.103 | 309 µs | 10839 |
-| f3 | 73.4% | 0.108 | 641 µs | 11095 |
-| f4 | 73.4% | 0.100 | 822 µs | 11095 |
+| f1 | 78.8% | 0.033 | 105 µs | 17522 |
+| f2 | 79.5% | 0.037 | 260 µs | 26154 |
+| f3 | 78.1% | 0.038 | 780 µs | 26410 |
+| f4 | 77.1% | 0.042 | 637 µs | 26410 |
 
-Most common test confusions: false → true (4); true → false (3).
+Most common test confusions: true → false (11); false → true (7).
 
 <details><summary>All 40 candidates (cross-validated)</summary>
 
 | Featurizer | C | Class weight | Accuracy | ECE | Noise floor | Log-loss |
 |---|---|---|---|---|---|---|
-| f2 | 0.25 | balanced | 76.1% | 0.108 | 0.089 | 0.518 |
-| f2 | 1 | balanced | 74.3% | 0.103 | 0.089 | 0.518 |
-| f1 | 0.25 | balanced | 74.3% | 0.097 | 0.086 | 0.527 |
-| f3 | 0.25 | balanced | 73.4% | 0.108 | 0.088 | 0.523 |
-| f1 | 1 | balanced | 73.4% | 0.088 | 0.087 | 0.525 |
-| f4 | 4 | none | 73.4% | 0.100 | 0.086 | 0.548 |
-| f2 | 16 | none | 72.5% | 0.085 | 0.087 | 0.532 |
-| f1 | 4 | none | 72.5% | 0.097 | 0.085 | 0.544 |
-| f3 | 1 | balanced | 71.6% | 0.114 | 0.088 | 0.525 |
-| f1 | 16 | none | 71.6% | 0.095 | 0.084 | 0.534 |
-| f3 | 16 | none | 71.6% | 0.094 | 0.084 | 0.537 |
-| f1 | 64 | none | 71.6% | 0.094 | 0.087 | 0.538 |
-| f3 | 64 | none | 71.6% | 0.108 | 0.088 | 0.543 |
-| f2 | 4 | none | 71.6% | 0.101 | 0.084 | 0.543 |
-| f3 | 4 | none | 71.6% | 0.085 | 0.084 | 0.543 |
-| f2 | 64 | none | 70.6% | 0.097 | 0.086 | 0.536 |
-| f4 | 16 | none | 70.6% | 0.061 | 0.089 | 0.549 |
-| f2 | 4 | balanced | 69.7% | 0.079 | 0.086 | 0.523 |
-| f3 | 4 | balanced | 69.7% | 0.097 | 0.088 | 0.531 |
-| f4 | 1 | none | 69.7% | 0.077 | 0.076 | 0.571 |
-| f1 | 4 | balanced | 68.8% | 0.094 | 0.085 | 0.528 |
-| f4 | 64 | none | 67.9% | 0.100 | 0.090 | 0.556 |
-| f3 | 1 | none | 67.9% | 0.113 | 0.072 | 0.578 |
-| f1 | 1 | none | 67.9% | 0.102 | 0.069 | 0.580 |
-| f2 | 1 | none | 67.9% | 0.140 | 0.066 | 0.581 |
-| f4 | 0.25 | none | 67.9% | 0.096 | 0.054 | 0.605 |
-| f3 | 0.25 | none | 67.9% | 0.040 | 0.042 | 0.610 |
-| f1 | 0.25 | none | 67.9% | 0.029 | 0.043 | 0.612 |
-| f2 | 0.25 | none | 67.9% | 0.042 | 0.042 | 0.612 |
-| f2 | 16 | balanced | 67.0% | 0.114 | 0.086 | 0.532 |
-| f1 | 16 | balanced | 67.0% | 0.112 | 0.085 | 0.535 |
-| f4 | 1 | balanced | 67.0% | 0.133 | 0.089 | 0.547 |
-| f3 | 64 | balanced | 67.0% | 0.147 | 0.089 | 0.548 |
-| f4 | 4 | balanced | 67.0% | 0.117 | 0.091 | 0.552 |
-| f4 | 16 | balanced | 67.0% | 0.084 | 0.089 | 0.560 |
-| f3 | 16 | balanced | 66.1% | 0.119 | 0.090 | 0.540 |
-| f2 | 64 | balanced | 66.1% | 0.139 | 0.086 | 0.541 |
-| f1 | 64 | balanced | 66.1% | 0.114 | 0.089 | 0.542 |
-| f4 | 0.25 | balanced | 66.1% | 0.115 | 0.089 | 0.545 |
-| f4 | 64 | balanced | 66.1% | 0.079 | 0.090 | 0.565 |
+| f2 | 16 | none | 80.0% | 0.032 | 0.041 | 0.438 |
+| f2 | 4 | none | 79.7% | 0.058 | 0.041 | 0.454 |
+| f3 | 4 | none | 79.7% | 0.038 | 0.041 | 0.455 |
+| f2 | 64 | balanced | 79.5% | 0.037 | 0.040 | 0.435 |
+| f1 | 64 | none | 79.5% | 0.033 | 0.041 | 0.439 |
+| f1 | 4 | none | 79.5% | 0.047 | 0.040 | 0.456 |
+| f2 | 64 | none | 79.2% | 0.031 | 0.041 | 0.436 |
+| f1 | 16 | none | 79.2% | 0.032 | 0.041 | 0.441 |
+| f1 | 64 | balanced | 78.8% | 0.033 | 0.041 | 0.438 |
+| f3 | 16 | none | 78.8% | 0.034 | 0.040 | 0.444 |
+| f2 | 16 | balanced | 78.3% | 0.043 | 0.041 | 0.436 |
+| f3 | 64 | balanced | 78.3% | 0.037 | 0.041 | 0.442 |
+| f3 | 16 | balanced | 78.1% | 0.038 | 0.041 | 0.439 |
+| f3 | 64 | none | 78.1% | 0.044 | 0.041 | 0.444 |
+| f4 | 4 | none | 78.1% | 0.038 | 0.042 | 0.463 |
+| f1 | 16 | balanced | 77.8% | 0.040 | 0.040 | 0.439 |
+| f3 | 4 | balanced | 77.8% | 0.029 | 0.039 | 0.448 |
+| f1 | 4 | balanced | 77.8% | 0.048 | 0.040 | 0.450 |
+| f4 | 1 | none | 77.4% | 0.037 | 0.043 | 0.490 |
+| f4 | 16 | none | 77.1% | 0.042 | 0.042 | 0.458 |
+| f4 | 4 | balanced | 77.1% | 0.052 | 0.041 | 0.461 |
+| f4 | 64 | balanced | 77.1% | 0.039 | 0.042 | 0.463 |
+| f2 | 4 | balanced | 76.9% | 0.039 | 0.041 | 0.447 |
+| f4 | 16 | balanced | 76.9% | 0.047 | 0.042 | 0.459 |
+| f4 | 1 | balanced | 76.4% | 0.046 | 0.042 | 0.479 |
+| f2 | 1 | none | 76.4% | 0.051 | 0.042 | 0.495 |
+| f3 | 1 | none | 76.2% | 0.048 | 0.042 | 0.492 |
+| f1 | 1 | none | 76.2% | 0.055 | 0.041 | 0.495 |
+| f4 | 64 | none | 75.9% | 0.039 | 0.042 | 0.462 |
+| f2 | 1 | balanced | 75.2% | 0.054 | 0.041 | 0.474 |
+| f1 | 1 | balanced | 75.2% | 0.050 | 0.041 | 0.479 |
+| f1 | 0.25 | balanced | 75.2% | 0.048 | 0.043 | 0.508 |
+| f2 | 0.25 | balanced | 75.0% | 0.032 | 0.043 | 0.503 |
+| f3 | 1 | balanced | 74.5% | 0.059 | 0.041 | 0.474 |
+| f3 | 0.25 | balanced | 74.5% | 0.045 | 0.043 | 0.504 |
+| f4 | 0.25 | balanced | 73.8% | 0.030 | 0.043 | 0.510 |
+| f4 | 0.25 | none | 69.6% | 0.097 | 0.039 | 0.544 |
+| f3 | 0.25 | none | 69.1% | 0.105 | 0.038 | 0.553 |
+| f1 | 0.25 | none | 68.6% | 0.123 | 0.038 | 0.556 |
+| f2 | 0.25 | none | 68.4% | 0.124 | 0.037 | 0.558 |
 
 </details>
 
@@ -458,13 +458,12 @@ Most common test confusions: tooling_cli → blockchain_web3 (1); hpc_scientific
 
 ## Caveats
 
-- route: only 53 test examples, so its test accuracy is uncertain by about ±8 points (the cross-validated figure rests on 298 examples).
+- route: only 65 test examples, so its test accuracy is uncertain by about ±8 points (the cross-validated figure rests on 363 examples).
 - risk: only 22 test examples, so its test accuracy is uncertain by about ±18 points (the cross-validated figure rests on 124 examples).
 - risk stays on the LLM tier for now: only 2 confident test answers, too few to verify the threshold (need 10).
-- breaking_change: only 19 test examples, so its test accuracy is uncertain by about ±20 points (the cross-validated figure rests on 109 examples).
-- breaking_change stays on the LLM tier for now: only 7 confident test answers, too few to verify the threshold (need 10).
+- breaking_change: only 75 test examples, so its test accuracy is uncertain by about ±10 points (the cross-validated figure rests on 424 examples).
 - severity: only 123 test examples, so its test accuracy is uncertain by about ±8 points (the cross-validated figure rests on 695 examples).
 - All tests are against teacher labels, not people. `kit.py review` builds a human gold set.
 - Most training data is synthetic (written by the teacher model). Your real requests, issues and diffs will look different; label some with `generate --from-file` or `--from-git` and retrain to see how the numbers transfer.
 
-_Generated 2026-10-25 07:38:43._
+_Generated 2026-10-25 13:16:36._

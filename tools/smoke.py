@@ -20,6 +20,8 @@ ROOT = Path(__file__).resolve().parent.parent
 SKILL = ROOT / "dev-decide-v5" / "skill"
 SCRIPTS = SKILL / "scripts"
 PLUGIN_SKILL = ROOT / "plugin" / "skills" / "dev-decide"
+TRACES = Path(tempfile.mkdtemp(prefix="dd-smoke-traces-"))  # the decision graph's records, never the real ~/.claude
+os.environ["DEV_DECIDE_TRACE_DIR"] = str(TRACES)
 ENV = dict(os.environ, DEV_DECIDE_BACKEND="none", DEV_DECIDE_ESCALATE="0")
 failures = []
 
@@ -44,7 +46,8 @@ def git_repo():
 
 def manifests():
     for path in (ROOT / ".claude-plugin" / "marketplace.json", ROOT / "plugin" / ".claude-plugin" / "plugin.json",
-                 ROOT / "plugin" / "hooks" / "hooks.json", SKILL / "presets.json", SKILL / "policy.default.json"):
+                 ROOT / "plugin" / "hooks" / "hooks.json", ROOT / "plugin-graph" / ".claude-plugin" / "plugin.json",
+                 ROOT / "plugin-graph" / "hooks" / "hooks.json", SKILL / "presets.json", SKILL / "policy.default.json"):
         try:
             json.loads(path.read_text(encoding="utf-8"))
             check("valid JSON: %s" % path.relative_to(ROOT), True)
@@ -53,6 +56,8 @@ def manifests():
     market = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
     plugin = json.loads((ROOT / "plugin" / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
     check("marketplace lists the plugin", any(p.get("name") == plugin.get("name") for p in market.get("plugins", [])))
+    check("marketplace lists the decision graph panel",
+          any(p.get("name") == "dev-decide-graph" for p in market.get("plugins", [])))
 
 
 def plugin_in_sync():
@@ -199,9 +204,80 @@ def hint_server():
         except urllib.error.HTTPError as e:
             check("hint server: refuses browser requests", e.code == 403)
         check("hint server: writes nothing to the repository", not (repo / ".claude" / "dev-decide").exists())
+
+        def call(path, data=None, headers=None):
+            req = urllib.request.Request("http://127.0.0.1:%d%s" % (port, path), method="POST" if data else "GET",
+                                         data=json.dumps(data).encode() if data else None, headers=headers or {})
+            try:
+                with urllib.request.urlopen(req, timeout=30) as r:
+                    return r.status, r.read().decode("utf-8"), r.headers
+            except urllib.error.HTTPError as e:
+                return e.code, "", e.headers
+        time.sleep(0.5)  # the agent starts after the prompt and runs for a while
+        call("/tool", {"session_id": "", "cwd": str(repo), "hook_event_name": "PostToolUse", "tool_name": "Agent",
+                       "tool_use_id": "t1", "duration_ms": 200,
+                       "tool_input": {"subagent_type": "db-migrate", "description": "Rename the column",
+                                      "prompt": "do the private thing"}})
+        time.sleep(1.5)  # traces are written after the answer
+        q = "/trace?root=" + urllib.request.quote(str(repo))
+        code, body, _ = call(q)
+        stats = json.loads(body)["summary"]["stats"] if code == 200 else {}
+        check("decision graph: a hint and the agent Claude then used are linked",
+              stats.get("hinted") == 1 and stats.get("used") == 1 and stats.get("followed") == 1, str(stats))
+        raw = "".join(f.read_text(encoding="utf-8") for f in TRACES.glob("*.jsonl"))
+        check("decision graph: keeps only the first 40 characters of a prompt",
+              "rename the user_email column to email in" in raw and "without downtime" not in raw
+              and "private thing" not in raw)
+        code, body, hdr = call("/graph")
+        check("decision graph: the page is served with a CSP", code == 200 and "Decision Graph" in body
+              and "frame-ancestors 'none'" in (hdr.get("Content-Security-Policy") or ""))
+        code, body, hdr = call(q.replace("/trace", "/graph.svg") + "&theme=dark")
+        check("decision graph: the SVG names the agent", code == 200 and body.startswith("<svg") and "db-migrate" in body)
+        check("decision graph: other sites' pages are refused",
+              call(q, headers={"Origin": "https://example.com"})[0] == 403)
+        second = subprocess.Popen([sys.executable, str(SCRIPTS / "hookd.py"), "--serve"], env=env,
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            second.wait(timeout=20)
+        except subprocess.TimeoutExpired:
+            second.kill()
+            second.wait(timeout=10)
+            check("hint server: a second server cannot take the same port", False, "it kept running")
+        else:
+            check("hint server: a second server cannot take the same port", call("/health")[0] == 200)
     finally:
         subprocess.run([sys.executable, str(SCRIPTS / "hookd.py"), "--stop"], env=env, timeout=30)
         shutil.rmtree(str(repo), ignore_errors=True)
+
+
+def decision_graph():
+    sys.path.insert(0, str(SCRIPTS))
+    import traces
+    check("decision graph: a pasted key is masked in the preview",
+          traces.preview("use sk-ant-api03-AbCdEfGhIjKlMnOpQrSt to call the api", 40) == "use [\u2026] to call the api")
+    check("decision graph: prompt_chars 0 keeps no text", traces.preview("anything at all", 0) is None)
+    ev = [{"kind": "hint", "ts": 1000, "session": "s", "task_type": "bugfix", "decided_by": "trained model",
+           "hint": "debugger", "ms": 4},
+          {"kind": "used", "ts": 3000, "ms": 500, "session": "s", "tool": "Agent", "name": "Explore"},
+          {"kind": "used", "ts": 9000, "ms": 100, "session": "other", "tool": "Agent", "name": "debugger"}]
+    s = traces.summary(ev)
+    check("decision graph: a use after a hint counts against it, a use in another session does not",
+          s["stats"]["after_hint"] == 1 and s["stats"]["followed"] == 0 and
+          any(p["used"] == "Explore" and p["suggested"] == "debugger" for p in s["paths"]), json.dumps(s["paths"]))
+    check("decision graph: an empty period draws an empty graph", "No decisions recorded" in traces.svg(traces.summary([])))
+    repo = git_repo()
+    import hook_route
+    ide = ("<ide_opened_file>The user opened the file src/components/Button.tsx in the IDE. This may or may not be "
+           "related to the current task.</ide_opened_file> ok")
+    out, ev = hook_route.explain({"prompt": ide, "cwd": str(repo)})
+    check("routing hint: the editor's context is not taken for the request",
+          out is None and ev.get("skipped") == "under 4 words" and ev.get("text") == "ok", str(ev))
+    decide(repo, "+local issue_type :: Login returns 500 for users with a plus sign in their email")
+    rows = traces.load(traces.slug(repo), 1)
+    check("decision graph: a /dev-decide answer is recorded outside the repository",
+          any(r.get("kind") == "decision" and r.get("answers", {}).get("issue_type") for r in rows)
+          and not list(repo.glob(".claude/dev-decide/traces*")), str(rows)[:160])
+    shutil.rmtree(str(repo), ignore_errors=True)
 
 
 def optional_route_model():
@@ -211,6 +287,22 @@ def optional_route_model():
              "security-auditor", "test-writer"]
     check("optional route model: used when its agents exist", fm.optional_registry(names) is not None)
     check("optional route model: not used for other agents", fm.optional_registry(["my-own-agent"]) is None)
+    import inputs
+    import signals
+    reg = fm.optional_registry(names)
+    chat =[json.loads(l)["input"]["text"] for l in (ROOT / "dev-decide-kit" / "pretrained" / "data" / "route" /
+                                                     "chat_test.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
+    hinted = 0
+    for text in chat:
+        item = inputs.Item(None)
+        item.kind, item.text = "text", text
+        F, _ = signals.analyze(item, [])
+        ans = reg.answer("route", "choose", fm.Features(item, F))
+        if ans:
+            top = max((k for k in ans["probs"] if k != "_rest"), key=ans["probs"].get)
+            hinted += top != "none"
+    check("route model: held-out chat messages get no agent (at most 10%)", hinted <= 0.1 * len(chat),
+          "%d of %d" % (hinted, len(chat)))
 
 
 def gate_guesses():
@@ -300,6 +392,14 @@ def server():
         check("server /health", code == 200 and health.get("model") == "none", body.decode()[:120])
         code, body = get("/")
         check("server serves the web page", code == 200 and b"Dev Decide" in body)
+        with urllib.request.urlopen(base + "/", timeout=30) as r:
+            csp = r.headers.get("Content-Security-Policy") or ""
+        check("web page allows no inline or eval'd script", "script-src 'self';" in csp and "unsafe-eval" not in csp, csp)
+        for asset in ("/ui.js", "/vendor/alpine-csp.min.js"):
+            req = urllib.request.Request(base + asset)
+            with urllib.request.urlopen(req, timeout=30) as r:
+                ok = r.status == 200 and "javascript" in (r.headers.get("Content-Type") or "") and len(r.read()) > 1000
+            check("server serves %s as JavaScript" % asset, ok)
         check("API refuses a missing token", get("/v1/learning")[0] == 401)
         code, body = get("/v1/decide", {"Authorization": "Bearer " + token, "Content-Type": "application/json"},
                          json.dumps({"state": "Login returns 500 for users with a plus sign in their email",
@@ -332,10 +432,12 @@ def server():
 
 if __name__ == "__main__":
     for step in (manifests, plugin_in_sync, first_run, hook_writes_nothing, secrets, rollback, routing, short_issues,
-                 starter_upgrade, optional_route_model, gate_guesses, limit_messages, state_sync, hint_server, server):
+                 starter_upgrade, optional_route_model, gate_guesses, limit_messages, state_sync, decision_graph,
+                 hint_server, server):
         try:
             step()
         except Exception as exc:
             check(step.__name__, False, repr(exc))
+    shutil.rmtree(str(TRACES), ignore_errors=True)
     print("\n%d check(s) failed" % len(failures) if failures else "\nall checks passed")
     sys.exit(1 if failures else 0)

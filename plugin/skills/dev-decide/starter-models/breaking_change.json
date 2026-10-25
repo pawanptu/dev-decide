@@ -1,1 +1,1 @@
-{"classes": ["false", "true"], "kind": "verify", "bias": [0.0, -0.18787268037597674], "temperature": 0.27910791745943525, "threshold": 0.7844680380733748, "featurizer": "f1", "format": "bin1"}
+{"classes": ["false", "true"], "kind": "verify", "bias": [0.0, -1.3422426619637757], "temperature": 1.4222660082929914, "threshold": 0.7952401610210019, "featurizer": "f1", "format": "bin1", "class_thresholds": {"true": 0.8273}}

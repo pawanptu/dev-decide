@@ -207,6 +207,46 @@ def _escalate(work, req, cat, ctx, flags, policy, root, llm_info):
         else {"keys": n, "backend": info.get("backend")}
 
 
+_WORST = {"pass": 0, "review": 1, "block": 2}
+
+
+def _trace(root, policy, req, out, items, facts=None):
+    """Note this decision for the decision graph (traces.py): the questions, the answers and where each came
+    from, the gates and the time, labeled with the input's task type and area. Never the input itself."""
+    try:
+        import traces
+        if not traces.enabled(policy):
+            return
+        rows = out.get("items") or [out]
+        gates = {}
+        for row in rows:
+            for name, g in (row.get("gates") or {}).items():
+                v = (g or {}).get("verdict")
+                if v and _WORST.get(v, 0) >= _WORST.get(gates.get(name), -1):
+                    gates[name] = v
+        answers = {}
+        if not out.get("items"):
+            for k, a in (out.get("answers") or {}).items():
+                label = next((a[f] for f in ("choice", "score", "verdict") if a.get(f) is not None), None)
+                answers[k] = {"answer": label, "via": a.get("via"), "confidence": a.get("confidence")}
+        F = facts if facts is not None else signals.analyze(items[0], [])[0]
+        task, area = traces.labels(items[0], F, root)
+        meta = out.get("meta") or {}
+        ms = meta.get("ms") or {}
+        first = items[0]
+        shown = first.text if first.text else (
+            "diff of %d file%s" % (len(first.files), "" if len(first.files) == 1 else "s") if first.files else None)
+        traces.record(root, {
+            "kind": "decision", "text": traces.preview(shown, traces.prompt_chars(policy)) if len(rows) == 1 else
+            "%d items" % len(rows), "bundles": list(req.bundles), "questions": list(req.questions)[:30],
+            "answers": answers, "gates": gates, "items": len(rows), "via": meta.get("via"),
+            "ms": ms.get("total"), "model_ms": ms.get("model"), "model_calls": meta.get("model_calls", 0),
+            "cached": bool(meta.get("cache")), "task_type": task, "domain": area,
+        }, traces.keep_days(policy))
+    except Exception:
+        pass  # the graph must never break a decision
+
+
 def decide(text=None, spec=None, cwd=None, extra_flags=(), use_cache=True, api_key=None, ephemeral=False):
     """One decision. api_key: the caller's own Anthropic key, used for this request's model calls only (never
     stored or logged). ephemeral: keep nothing about the request (no learning, cache, decision log or features),
@@ -253,6 +293,7 @@ def decide(text=None, spec=None, cwd=None, extra_flags=(), use_cache=True, api_k
             hit["meta"]["ms"] = {"total": ms}
             summary = hit.get("summary", "")
             hit["summary"] = summary.rsplit(" | ", 1)[0] + " | cached, %d ms" % ms if summary else summary
+            _trace(root, policy, req, hit, items)
             return hit
 
     reg = fastmodel.Registry(root)
@@ -431,4 +472,6 @@ def decide(text=None, spec=None, cwd=None, extra_flags=(), use_cache=True, api_k
             _cache_put(root, cache_key, out, ttl)
         except Exception:
             pass
+    if not ephemeral:
+        _trace(root, policy, req, out, items, states[0].facts if states and not batch else None)
     return out

@@ -1,0 +1,21 @@
+{
+  "name": "dev-decide-graph",
+  "version": "0.1.0",
+  "description": "A side panel with dev-decide's decision graph: which agent or skill was suggested for which kind of task, what Claude really used, and how long each step took. Open it with /dev-decide-graph.",
+  "author": {
+    "name": "pawanptu",
+    "url": "https://github.com/pawanptu"
+  },
+  "homepage": "https://github.com/pawanptu/dev-decide",
+  "repository": "https://github.com/pawanptu/dev-decide",
+  "license": "MIT",
+  "keywords": [
+    "dev-decide",
+    "routing",
+    "agents",
+    "skills",
+    "graph",
+    "panel"
+  ],
+  "types": "./types/index.d.ts"
+}

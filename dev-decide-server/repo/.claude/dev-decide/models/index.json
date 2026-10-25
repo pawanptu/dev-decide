@@ -22,22 +22,22 @@
     "test_source": "held-out teacher labels"
   },
   "breaking_change": {
-    "enabled": false,
+    "enabled": true,
     "featurizer": "f1",
     "kind": "verify",
     "classes": [
       "false",
       "true"
     ],
-    "threshold": 0.7844680380733748,
-    "temperature": 0.2791,
+    "threshold": 0.7952401610210019,
+    "temperature": 1.4223,
     "source": "dev-decide-kit",
-    "trained": "2026-10-23 13:07:56",
-    "test_accuracy": 0.6316,
-    "test_ece": 0.1909,
-    "coverage": 0.3684210526315789,
-    "accepted_accuracy": 0.7142857142857143,
-    "reason": "only 7 confident test answers, too few to verify the threshold (need 10)",
+    "trained": "2026-10-25 13:02:30",
+    "test_accuracy": 0.76,
+    "test_ece": 0.138,
+    "coverage": 0.5733333333333334,
+    "accepted_accuracy": 0.9069767441860465,
+    "reason": "accepted answers reach the target on held-out data",
     "test_source": "held-out teacher labels"
   },
   "issue_type": {

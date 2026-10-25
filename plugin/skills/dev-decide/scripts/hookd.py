@@ -5,21 +5,31 @@ A command hook starts Python, imports the engine and loads the meaning model on 
 Windows). This server keeps all of that loaded, so a hint takes a few milliseconds:
 
   UserPromptSubmit  {"type": "http", "url": "http://127.0.0.1:47321/route", "timeout": 2}
+  PostToolUse       {"type": "http", "url": "http://127.0.0.1:47321/tool", "timeout": 2}   (matcher "Agent|Skill")
   SessionStart      {"type": "command", "command": "sh <scripts>/run.sh hookd.py --ensure"}
 
   hookd.py --ensure   start the server unless one with this code is already running (prints nothing)
   hookd.py --serve    run in the foreground (what --ensure starts in the background)
   hookd.py --stop     stop a running server
 
-It listens on 127.0.0.1 only, answers no browser (requests with an Origin header, or a Host other than
-localhost, are refused), reads only agent and skill descriptions (as the command hook does), writes nothing,
-and exits after DEV_DECIDE_HOOK_IDLE_HOURS (default 12) without a request. The port is DEV_DECIDE_HOOK_PORT
-(default 47321). If the server is not running, Claude Code shows a non-blocking hook error and the prompt
-goes ahead without a hint; the next session start restarts it.
+It also keeps the decision graph (traces.py): after answering, it notes what the hint decided and, from
+PostToolUse, which agent or skill Claude really ran and for how long (on this machine, never in the
+repository; of a prompt only its first 40 characters, keys masked), and draws it:
+
+  GET /graph        the decision graph page (open http://127.0.0.1:47321/graph in a browser)
+  GET /trace        the graph, timeline and totals as JSON (?root=<project folder> or ?project=<id>, &days=1)
+  GET /graph.svg    the graph as SVG (&theme=light|dark|auto, &width=960, &header=1 totals and latest, &anim=1), for the side panel
+
+It listens on 127.0.0.1 only and answers no other site's page (a request whose Host is not localhost, or
+with an Origin header other than its own page's, is refused). It reads only agent and skill descriptions
+(as the command hook does) and exits after DEV_DECIDE_HOOK_IDLE_HOURS (default 12) without a request. The
+port is DEV_DECIDE_HOOK_PORT (default 47321). If the server is not running, Claude Code shows a non-blocking
+hook error and the prompt goes ahead without a hint; the next session start restarts it.
 """
 import hashlib
 import json
 import os
+import socket
 import subprocess
 import sys
 import threading
@@ -27,6 +37,7 @@ import time
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -36,14 +47,34 @@ IDLE_EXIT_S = float(os.environ.get("DEV_DECIDE_HOOK_IDLE_HOURS") or 12) * 3600
 MAX_BODY = 1 << 20
 LOCAL_HOSTS = ("127.0.0.1", "localhost")
 SERVICE = "dev-decide-hook"
+PAGE = HERE.parent / "graph.html"
+PAGE_HEADERS = {
+    "Content-Security-Policy": "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
+                               "img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; "
+                               "frame-ancestors 'none'",
+    "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer", "Cache-Control": "no-store",
+}
+
+
+class _Server(ThreadingHTTPServer):
+    """One server per port. Python's default SO_REUSEADDR lets a second server bind the same port on Windows (two
+    sessions starting at once would then split the requests, and each would hint), so bind exclusively there."""
+    allow_reuse_address = os.name != "nt"
+    daemon_threads = True
+
+    def server_bind(self):
+        if os.name == "nt" and hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        ThreadingHTTPServer.server_bind(self)
 
 
 def code_signature():
-    """Changes whenever the engine's files change, so --ensure replaces a server running older code."""
+    """A hash of the engine's code, so --ensure replaces a server running different code. It is based on the
+    files' contents, not their times, so two installed copies of the same version (the plugin and a global
+    install, say) agree and do not keep restarting each other's server."""
     h = hashlib.sha256()
     for f in sorted(HERE.glob("*.py")):
-        st = f.stat()
-        h.update(("%s|%d|%d\n" % (f.name, st.st_size, int(st.st_mtime))).encode())
+        h.update(f.name.encode() + b"\0" + f.read_bytes() + b"\0")
     return h.hexdigest()[:16]
 
 
@@ -67,6 +98,49 @@ def serve():
 
     state = {"last": time.monotonic()}
     sig = code_signature()
+    # The same prompt can arrive twice: Claude Code runs a plugin's hook and a settings file's identical hook
+    # separately. Only the first gets the hint, so Claude never sees it twice.
+    seen, seen_lock = {}, threading.Lock()
+
+    def first_time(data):
+        key = hashlib.sha256(("%s\0%s" % (data.get("session_id") or "", data.get("prompt") or "")).encode(
+            "utf-8", "replace")).hexdigest()
+        now = time.monotonic()
+        with seen_lock:
+            for k in [k for k, t in seen.items() if now - t > 30]:
+                del seen[k]
+            if key in seen:
+                return False
+            seen[key] = now
+            return True
+
+    def first_use(data):  # a tool use reaches every PostToolUse hook that matches: note it once
+        tid = data.get("tool_use_id") or json.dumps([data.get("session_id"), data.get("tool_name"),
+                                                     data.get("tool_input")], sort_keys=True, default=str)
+        return first_time({"session_id": "tool", "prompt": tid})
+
+    def later(fn, *args):  # trace writes happen after the answer is sent, so they never slow a prompt
+        def run():
+            try:
+                fn(*args)
+            except Exception:
+                pass
+        threading.Thread(target=run, daemon=True).start()
+
+    def graph_data(q):
+        import traces
+        projects = traces.projects()
+        pid = (q.get("project") or [""])[0]
+        root = (q.get("root") or [""])[0]
+        if not pid and root:
+            pid = traces.slug(root)
+        if not pid and projects:
+            pid = projects[0]["id"]
+        try:
+            days = min(max(float((q.get("days") or ["1"])[0]), 1 / 24.0), 366.0)
+        except ValueError:
+            days = 1.0
+        return traces, projects, pid, days, traces.summary(traces.load(pid, days), span_ms=days * 86400000)
 
     class Handler(BaseHTTPRequestHandler):
         server_version = SERVICE
@@ -74,24 +148,50 @@ def serve():
         def log_message(self, fmt, *args):  # quiet: nothing about prompts is written anywhere
             pass
 
-        def _local(self):
+        def _local(self, page=False):
+            # Claude Code's hooks and the side panel send no Origin; the graph page may send its own
             host = (self.headers.get("Host") or "").rsplit(":", 1)[0].lower()
-            return host in LOCAL_HOSTS and not self.headers.get("Origin")
+            origin = self.headers.get("Origin")
+            own = origin in ("http://127.0.0.1:%d" % PORT, "http://localhost:%d" % PORT)
+            return host in LOCAL_HOSTS and (not origin or (page and own))
 
-        def _send(self, code, obj=None):
-            body = json.dumps(obj).encode("utf-8") if obj is not None else b""
+        def _send(self, code, obj=None, body=None, ctype="application/json", headers=None):
+            if body is None:
+                body = json.dumps(obj).encode("utf-8") if obj is not None else b""
             self.send_response(code)
-            if obj is not None:
-                self.send_header("Content-Type", "application/json")
+            if body:
+                self.send_header("Content-Type", ctype)
+            for k, v in (headers or {}).items():
+                self.send_header(k, v)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
 
         def do_GET(self):
-            if not self._local():
+            if not self._local(page=True):
                 return self._send(403, {"error": "forbidden"})
-            if self.path.split("?", 1)[0] == "/health":
+            path, _, query = self.path.partition("?")
+            if path == "/health":
                 return self._send(200, {"service": SERVICE, "code": sig, "pid": os.getpid()})
+            nocache = {"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"}
+            try:
+                if path in ("/graph", "/graph/"):
+                    return self._send(200, body=PAGE.read_bytes(), ctype="text/html; charset=utf-8",
+                                      headers=PAGE_HEADERS)
+                if path == "/trace":
+                    traces, projects, pid, days, summ = graph_data(parse_qs(query))
+                    return self._send(200, {"projects": projects, "project": pid, "days": days, "summary": summ,
+                                            "text": traces.text_tree(summ)}, headers=nocache)
+                if path == "/graph.svg":
+                    q = parse_qs(query)
+                    traces, _, _, _, summ = graph_data(q)
+                    out = traces.svg(summ, theme=(q.get("theme") or ["auto"])[0], width=(q.get("width") or [960])[0],
+                                     animate=(q.get("anim") or ["0"])[0] == "1", header=(q.get("header") or ["0"])[0] == "1")
+                    return self._send(200, body=out.encode("utf-8"), ctype="image/svg+xml; charset=utf-8",
+                                      headers=dict(nocache, **{"Content-Security-Policy": "default-src 'none'; "
+                                                                                        "style-src 'unsafe-inline'"}))
+            except Exception as e:
+                return self._send(500, {"error": type(e).__name__})
             self._send(404, {"error": "not found"})
 
         def do_POST(self):
@@ -103,18 +203,26 @@ def serve():
                 self._send(200, {"ok": True})
                 threading.Thread(target=httpd.shutdown, daemon=True).start()
                 return
-            if path != "/route":
+            if path not in ("/route", "/tool"):
                 return self._send(404, {"error": "not found"})
+            out = ev = data = None
             try:
                 n = int(self.headers.get("Content-Length") or 0)
                 data = json.loads(self.rfile.read(min(max(n, 0), MAX_BODY)).decode("utf-8") or "{}")
-                out = hook_route.hint(data) if isinstance(data, dict) else None
+                if not isinstance(data, dict):
+                    data = None
+                elif path == "/tool":
+                    if first_use(data):
+                        later(hook_route.used, data)
+                elif first_time(data):
+                    out, ev = hook_route.explain(data)
             except Exception:
                 out = None  # a hint must never break a prompt: answer "no hint"
-            self._send(200, out)  # an empty 2xx body means "no hint" to Claude Code
+            self._send(200, out)  # an empty 2xx body means "no hint" (or "go ahead") to Claude Code
+            if ev:
+                later(hook_route.note, ev, data.get("prompt"))
 
-    httpd = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
-    httpd.daemon_threads = True
+    httpd = _Server(("127.0.0.1", PORT), Handler)
 
     def idle_watch():
         while True:

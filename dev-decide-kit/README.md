@@ -21,11 +21,11 @@ by Sonnet, in 89 model calls for $1.22. Retraining with meaning features needed 
 
 | Decision | Features chosen | Answered locally (test) | Overall test accuracy (was) | Status |
 |---|---|---|---|---|
-| `route` | words + meaning (f4) | 91% at 94% accuracy | 90.6% (84.9%) | **enabled** |
+| `route` | words + meaning (f3), retrained 25 October with chat | 85% at 95% accuracy | 87.7% on a test split that now includes chat | **enabled** |
 | `issue_type` | words + spelling (f2), retrained 25 October | 93% at 96% accuracy | 95.3% | **enabled** |
 | `severity` | words (f1), retrained 25 October | 45% at 98% accuracy | 73.2% | **enabled** |
 | `domain` | words + meaning (f4), retrained 25 October | 70% at 92% accuracy | 80.2% across 32 classes | **enabled** |
-| `breaking_change` | words (f1) | 37%, only 7 answers | 63.2% (63.2%) | not yet |
+| `breaking_change` | words (f1), retrained 25 October | 57% at 91% accuracy | 76.0% | **enabled** |
 | `risk` | words + spelling (f2) | 9%, 2 answers | 68.2% (63.6%), 82% within one level | not yet |
 
 Meaning features won where the decision is about topic (routing, domain), and word features where it is about
@@ -62,9 +62,19 @@ On examples that neither the earlier run nor this one trained on:
 | `severity`, 38 long reports | 76.3% (84.2%) | 47.4% (71.1%, but not enabled) | 94.4% (85.2%) |
 
 `severity` is right less often overall on these 38, but answers only where it is reliable; before, it was not
-enabled at all. The run's report is `reports/train-2026-10-25-triage-5.1.json`. The 500 new diffs for `risk` and
-`breaking_change` were not written: the writer hit the Claude plan's session limit (the kit now treats such replies
-as failures and never caches them), so those two models are unchanged.
+enabled at all. The run's report is `reports/train-2026-10-25-triage-5.1.json`. The first attempt at 500 new diffs hit the
+Claude plan's session limit (the kit now treats such replies as failures and never caches them); a second run wrote
+497 (147 calls, about $7 of plan usage, roughly $0.014 per diff). `breaking_change`, retrained on 647 diffs, is now
+enabled; on the 18 diffs neither run trained on, accuracy went from 66.7% to 72.2% and its local answers from 71.4%
+to 85.7% right (`reports/train-2026-10-25-pr-5.1.json`). The retrained `risk` model measured worse on its 19 shared
+held-out diffs (52.6% against 63.2%) and still reached no reliable threshold, so the original `risk` model stays.
+
+**Route model retrained with chat (25 October 2026).** Its "no agent" examples were all non-software tasks, so it sent
+development-flavored chat to an agent ("where do I find this setting" went to security-auditor at 0.91). 77
+hand-written chat and meta messages labeled "none" (`data/route/chat_examples.py`) were added and the model retrained,
+with no model calls. On 42 differently-worded chat messages it never trained on (`data/route/chat_test.jsonl`), wrong
+hints fell from 24 to 1. On 51 real requests neither run trained on, it hints on 71% (was 82%) at 94.4% right (was
+92.9%). Both chat sets were written by one person, so real chat may score a little lower.
 
 **Speed.** Measured on a 2-core cloud VM with no model call, against Jev's reported 70–500 ms:
 

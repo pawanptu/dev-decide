@@ -34,13 +34,19 @@ Reading a result: `risk 3.0? | needs a human: risk` means a score of 3.0 on a sc
 ## What the plugin installs
 
 - **Skill** `dev-decide`, in `skills/dev-decide/`.
-- **Two hooks**, in `hooks/hooks.json`:
+- **Three hooks**, in `hooks/hooks.json`:
   - `SessionStart` starts a small helper server bound to `127.0.0.1` only.
   - `UserPromptSubmit` asks that local server whether one of your agents or skills clearly matches the prompt. If so, it adds a one-line routing hint.
+  - `PostToolUse` (only for the `Agent` and `Skill` tools) tells the server which agent or skill Claude really used, and for how long, for the decision graph.
+
+## Decision graph
+
+Open `http://127.0.0.1:47321/graph` while Claude Code is running. For each kind of task it shows what decided (the trained route model, the zero-shot match or a `/dev-decide` question), which agent or skill was suggested, what Claude really used afterwards (green: the suggested one; red: another), and how long each step took, with a timeline below. For the same graph in a side panel, install `dev-decide-graph@dev-decide` and type `/dev-decide-graph`.
 
 ## Privacy and credentials
 
-- The routing hook listens on `127.0.0.1` only, never calls a model, never blocks a prompt, and writes nothing.
+- The routing hook listens on `127.0.0.1` only, never calls a model, never blocks a prompt, and writes nothing to your repository.
+- The decision graph is kept on your machine only, in `~/.claude/dev-decide/traces/`, for 30 days: task types, agent and skill names, timings, and the first 40 characters of each prompt (keys and tokens masked). `{"decision_graph": {"prompt_chars": 0}}` in `.claude/dev-decide.json` keeps no prompt text; `{"decision_graph": {"enabled": false}}` keeps nothing.
 - The plugin uses no one else's credentials. By default it asks Claude through your own Claude Code sign-in. To use the API instead, set `ANTHROPIC_API_KEY` in your shell. Never commit the key.
 - Logs, labels and learned models are stored in your repository under `.claude/dev-decide/`. Nothing is sent anywhere else.
 

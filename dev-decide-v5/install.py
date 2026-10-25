@@ -4,7 +4,8 @@
   python3 install.py                    install for all your projects (~/.claude)
   python3 install.py --project          install into this repository (./.claude); commit it to share
   python3 install.py --router-hook      also add the routing hint (opt-in; settings are backed up first): a small local
-                                        server answers it in milliseconds (Claude Code's HTTP hooks)
+                                        server answers it in milliseconds (Claude Code's HTTP hooks), notes which agent
+                                        or skill Claude then used, and draws it at http://127.0.0.1:47321/graph
   python3 install.py --router-hook=command   the same hint as a command run on every prompt (older Claude Code)
   python3 install.py --uninstall        remove the skill, the hook, and the old v2 engine agent
 """
@@ -17,7 +18,9 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 SRC = HERE / "skill"
-HOOK_MARKS = ("hook_route.py", "hookd.py", ":47321/route")  # every form of the routing hint, old and new
+HOOK_MARKS = ("hook_route.py", "hookd.py", ":47321/route", ":47321/tool")  # every form of the routing hint, old and new
+HOOK_EVENTS = ("UserPromptSubmit", "SessionStart", "PostToolUse")
+USED_TOOLS = "Agent|Skill"  # what Claude really used, for the decision graph
 HOOK_PORT = 47321
 
 
@@ -62,7 +65,7 @@ def save_settings(path, data):
 def strip_hook(data):
     hooks = data.get("hooks") or {}
     removed = 0
-    for event in ("UserPromptSubmit", "SessionStart"):
+    for event in HOOK_EVENTS:
         groups = hooks.get(event) or []
         kept = []
         for g in groups:
@@ -154,13 +157,21 @@ def main():
         if args.router_hook == "command":
             cmd = '%s "%s"' % (py, (scripts / "hook_route.py").as_posix())
             hooks.setdefault("UserPromptSubmit", []).append({"hooks": [{"type": "command", "command": cmd, "timeout": 5}]})
+            hooks.setdefault("PostToolUse", []).append(
+                {"matcher": USED_TOOLS, "hooks": [{"type": "command", "command": cmd, "timeout": 5}]})
         else:  # a local server answers in milliseconds; each session start makes sure it runs
             cmd = '%s "%s" --ensure' % (py, (scripts / "hookd.py").as_posix())
             hooks.setdefault("SessionStart", []).append({"hooks": [{"type": "command", "command": cmd, "timeout": 10}]})
             hooks.setdefault("UserPromptSubmit", []).append(
                 {"hooks": [{"type": "http", "url": "http://127.0.0.1:%d/route" % HOOK_PORT, "timeout": 2}]})
+            hooks.setdefault("PostToolUse", []).append(
+                {"matcher": USED_TOOLS, "hooks": [{"type": "http", "url": "http://127.0.0.1:%d/tool" % HOOK_PORT,
+                                                   "timeout": 2}]})
         save_settings(sfile, data)
         print("added the router hook (%s) to %s" % (args.router_hook, sfile))
+        if args.router_hook == "http":
+            print("Decision graph (which agent or skill for which task, and timings): http://127.0.0.1:%d/graph"
+                  % HOOK_PORT)
 
     print("")
     print("Python command: %s" % py)

@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **Decision graph.** `http://127.0.0.1:47321/graph` shows, per kind of task (type · area), what decided (the
+  trained route model, the zero-shot match or a `/dev-decide` question), which agent or skill was suggested, which
+  one Claude really used afterwards (from a new `PostToolUse` hook on the Agent and Skill tools) and how long each
+  step took, with a filterable timeline, a project picker, 1 hour to 30 days, and live refresh. The hint server
+  records it after answering, so the hint is no slower.
+- **`dev-decide-graph` plugin**: the same graph as a side panel, opened with `/dev-decide-graph` (a text tree in the
+  terminal, the graph in the desktop app and VS Code). Needs Claude Code 2.1.310 or later.
+- Settings: `"decision_graph": {"enabled": true, "keep_days": 30, "prompt_chars": 40}`. Records stay on the machine
+  in `~/.claude/dev-decide/traces/`, never in the repository; of a prompt only the first `prompt_chars` characters
+  are kept, keys and tokens masked. A server listening beyond localhost (`serve.py`) records nothing.
+
+### Changed
+- **Decision graph page redesigned:** a plain-English summary at the top, a "read it left to right" guide, stat
+  tiles that count up with sparklines and meters, an animated step-by-step replay of the latest request, a flow graph
+  with moving particles, hover tracing, tooltips, keyboard focus and a table view, leaderboards (agents and skills
+  used, kinds of tasks, who decided and how fast), and a timeline with per-step timing bars, day groups and filters.
+  Live refresh keeps the previous frame on screen and toasts each new request. Colors are the validated categorical
+  slots (checked for color-blind separation in light and dark); reduced motion turns every animation off.
+- **Side panel:** the SVG now carries the totals, the latest request, check and cross badges, and moving dots on
+  the busiest links; the terminal shows a text tree with bars and check marks.
+- **Web console rebuilt with Alpine.js** (its CSP build, vendored in `skill/vendor/`, so no eval and no CDN): an
+  animated example decision in the hero, a three-step console (what to decide, your input, how to answer) with
+  tiles, a staged progress view while it decides, a verdict banner, a "where the answers came from" bar, answers
+  ordered by trust with growing confidence meters, history cards, "Try it" on every bundle, and install tabs.
+  The page's script now comes from `/ui.js`, so its CSP is `script-src 'self'` (no inline script at all).
+
+### Fixed
+- The console offered Right/Wrong on rough guesses, which the server never logged, so saving one failed.
+- On Windows a second hint server could bind the same port (Python's default `SO_REUSEADDR`), so two sessions
+  starting together could split prompts between two servers. It now binds exclusively.
+
 ## 5.1.0 (25 October 2026)
 
 ### Added
@@ -32,7 +66,11 @@
 - Triage models retrained with 149 hand-labeled short reports (checked blind by Sonnet) and 772 new generated issues.
   `issue_type`: short reports never trained on went from 35% to 88% right (96% of its local answers right), 95.3% on
   the held-out test split. `severity` and `domain` are now enabled (local answers 94% and 100% right on examples
-  neither run trained on). Repositories holding an older starter model get the new ones on their next decision;
+  neither run trained on). `breaking_change` is retrained on 647 diffs and now enabled (local answers 86% right on
+  diffs neither run trained on); the retrained `risk` measured worse and was not shipped.
+  The route model is retrained with chat messages: wrong hints on held-out chat fell from 24 of 42 to 1, at the cost
+  of fewer hints on real requests (71% instead of 82%, 94% right).
+  Repositories holding an older starter model get the new ones on their next decision;
   models you trained or the learning loop promoted are never replaced.
 - Rule-based guesses no longer call every short report noise.
 - The project root is found without starting git (faster on Windows).
@@ -45,5 +83,8 @@
 - A Claude Code plan or usage limit message was taken for a model answer (and cached by the kit).
 - A gate could block on rough local guesses alone; such rules now ask for review, while rules and models still block.
 - Reinstalling while the routing-hint server ran failed on Windows (a memory-mapped file); the installer now stops it first.
+- The routing hint named an agent even when the route model said none fits (it took the best of the rest).
+- The routing hint arrived twice when the plugin and a global install were both active (Claude Code runs a plugin's
+  hooks separately); the hint server now answers each prompt once, and identical copies no longer restart each other.
 - Gates passed on answers that were unsure; `.pyc` files were reviewed as part of a change; a `COMMIT -x` argument
   could be read as a git option; and the local API answered other websites when no token was set.

@@ -1,7 +1,12 @@
 {
   "name": "dev-decide",
-  "owner": {"name": "pawanptu", "url": "https://github.com/pawanptu"},
-  "metadata": {"description": "dev-decide: typed, calibrated decisions for software and AI work"},
+  "owner": {
+    "name": "pawanptu",
+    "url": "https://github.com/pawanptu"
+  },
+  "metadata": {
+    "description": "dev-decide: typed, calibrated decisions for software and AI work"
+  },
   "plugins": [
     {
       "name": "dev-decide",
@@ -9,7 +14,27 @@
       "description": "A decision engine for software and AI work: routes requests, triages issues, rates risk and gates pull requests. Answers locally in milliseconds when it can, asks Claude when it can't, and learns from every answer.",
       "version": "5.1.0",
       "category": "development",
-      "keywords": ["decision", "triage", "pull-request", "risk", "routing", "gates"]
+      "keywords": [
+        "decision",
+        "triage",
+        "pull-request",
+        "risk",
+        "routing",
+        "gates"
+      ]
+    },
+    {
+      "name": "dev-decide-graph",
+      "source": "./plugin-graph",
+      "description": "A side panel for dev-decide: the decision graph of which agent or skill was suggested for which kind of task, what Claude really used, and timings. Needs the dev-decide plugin and Claude Code 2.1.310 or later.",
+      "version": "0.1.0",
+      "category": "development",
+      "keywords": [
+        "dev-decide",
+        "routing",
+        "graph",
+        "panel"
+      ]
     }
   ]
 }

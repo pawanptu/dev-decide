@@ -30,8 +30,15 @@ Then use it in any repository, for example `/dev-decide pr :: DIFF` or `/dev-dec
 - **Routing hint, in milliseconds.** On each prompt a small local server (started by a session-start hook, reached
   through Claude Code's HTTP hook) checks whether one of your agents or skills clearly matches, and only then adds a
   one-line hint: about 5 ms per prompt. It listens on 127.0.0.1 only, never calls a model, never blocks a prompt and
-  writes nothing. To turn it off, put `{"router_hook": {"enabled": false}}` in `.claude/dev-decide.json`, or disable
-  the plugin's hooks.
+  writes nothing to your repository. To turn it off, put `{"router_hook": {"enabled": false}}` in
+  `.claude/dev-decide.json`, or disable the plugin's hooks.
+- **Decision graph.** Open `http://127.0.0.1:47321/graph` to see, per kind of task (bugfix · database, docs, ...),
+  what decided (the trained route model, the zero-shot match or a `/dev-decide` question), which agent or skill was
+  suggested, which one Claude really used afterwards, and how long each step took, with a timeline you can filter by
+  clicking a node. `/plugin install dev-decide-graph@dev-decide` adds the same graph as a side panel
+  (`/dev-decide-graph`, Claude Code 2.1.310+). It is kept on your machine only (`~/.claude/dev-decide/traces/`, 30
+  days) with the first 40 characters of each prompt, keys and tokens masked; set `"decision_graph"` in
+  `.claude/dev-decide.json` to keep less (`"prompt_chars": 0`) or nothing (`"enabled": false`).
 - **Example agents.** `dev-decide-kit/example-agents/` holds eight Claude Code subagents (backend-reviewer,
   db-migrate, frontend-dev, debugger, security-auditor, test-writer, devops-deploy, docs-writer). Copy them into
   `~/.claude/agents/` and the shipped route model, trained on exactly these, answers routing locally (about 94%
@@ -61,6 +68,8 @@ into `plugin/`, then `python3 tools/smoke.py` (CI runs the same checks on Linux 
 
 - **`dev-decide-v5/`**: the engine, with its bundled meaning model (30 MB, MIT). Install it in place of 3.x or
   4.x; your logs, models and labels are kept.
+- **`plugin/`** and **`plugin-graph/`**: the Claude Code plugin (a copy of the engine made by `tools/sync.py`) and
+  the decision graph side panel.
 - **`dev-decide-kit/`**: optional. It bootstraps labeled data with Claude and trains starting models. It ships
   with pretrained models from a real run (821 examples, 89 Claude calls, $1.22), retrained for 5.0.
 - **`setup_deploy.md`**: step-by-step setup on your computer, and deployment of the HTTP API on free hosting.

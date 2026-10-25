@@ -21,6 +21,18 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Agent|Skill",
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://127.0.0.1:47321/tool",
+            "timeout": 2
+          }
+        ]
+      }
     ]
   }
 }

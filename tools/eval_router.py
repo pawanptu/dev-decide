@@ -28,6 +28,8 @@ def load(split):
     rows = []
     for line in (DATA / "data" / "route" / "examples.jsonl").read_text(encoding="utf-8").splitlines():
         r = json.loads(line)
+        if r.get("source") == "hand-labeled-chat":  # chat rows train the route model; this measures requests
+            continue
         y = (r.get("labels") or {}).get("route")
         if not y:
             continue

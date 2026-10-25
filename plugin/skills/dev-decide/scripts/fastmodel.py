@@ -408,6 +408,12 @@ def seed_optional(root, policy):
         return
     dest = Path(root) / ".claude" / "dev-decide" / "models"
     index = dd.read_json(dest / "index.json", default={}) or {}
+    if index:
+        try:
+            _upgrade_starters(OPTIONAL_DIR, dest)  # an older optional starter (never a trained one) gets replaced
+        except OSError:
+            pass
+        index = dd.read_json(dest / "index.json", default={}) or {}
     todo = [p for p in starters if p not in index]
     if not todo:
         return

@@ -70,8 +70,10 @@ SECURITY_HEADERS = {
     "Cross-Origin-Resource-Policy": "same-origin",
     "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
 }
-PAGE_CSP = ("default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; "
+PAGE_CSP = ("default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; img-src data:; "
             "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+# The page's scripts: its own code and Alpine's CSP build (no eval), served from the skill folder.
+ASSETS = {"/ui.js": ("ui.js", "no-cache"), "/vendor/alpine-csp.min.js": ("vendor/alpine-csp.min.js", "public, max-age=86400")}
 
 
 def _env_int(name, default):
@@ -248,6 +250,15 @@ def make_handler(cwd, token=None, local_only=True, limits=None, trust_proxy=Fals
                 self.send_header("Cache-Control", "no-cache")
                 self.end_headers()
                 self.wfile.write(page)
+            elif path in ASSETS:
+                name, cache = ASSETS[path]
+                body = (dd.SKILL_DIR / name).read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/javascript; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", cache)
+                self.end_headers()
+                self.wfile.write(body)
             elif self._throttled():
                 return
             else:
@@ -418,6 +429,8 @@ def main():
         return 2
     if not local and not args.allow_file_refs:
         inputs.REFS = False  # remote callers must not read this machine's files; they send "diff" instead
+    if not local:
+        os.environ.setdefault("DEV_DECIDE_TRACE", "0")  # the decision graph is each person's own, not a shared server's
 
     cwd = str(Path(args.cwd).resolve())
     sync = None
