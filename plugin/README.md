@@ -48,6 +48,7 @@ Open `http://127.0.0.1:47321/graph` while Claude Code is running. For each kind 
 - The routing hook listens on `127.0.0.1` only, never calls a model, never blocks a prompt, and writes nothing to your repository.
 - The decision graph is kept on your machine only, in `~/.claude/dev-decide/traces/`, for 30 days: task types, agent and skill names, timings, and the first 40 characters of each prompt (keys and tokens masked). `{"decision_graph": {"prompt_chars": 0}}` in `.claude/dev-decide.json` keeps no prompt text; `{"decision_graph": {"enabled": false}}` keeps nothing.
 - The plugin uses no one else's credentials. By default it asks Claude through your own Claude Code sign-in. To use the API instead, set `ANTHROPIC_API_KEY` in your shell. Never commit the key.
+- To have another model answer instead (any OpenAI-compatible endpoint, a local Ollama server, Gemini, or a model CLI such as Codex), set `backend` in your personal `~/.claude/dev-decide.json`. Your input then goes to that provider, not Anthropic. See "Other models" in the [main repository](https://github.com/pawanptu/dev-decide/blob/main/dev-decide-v5/README.md).
 - Logs, labels and learned models are stored in your repository under `.claude/dev-decide/`. Nothing is sent anywhere else.
 
 ## Turn off the routing hint

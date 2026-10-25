@@ -254,7 +254,9 @@ def temperature_for(policy, name):
 
 
 def model_for(policy, backend):
-    env = os.environ.get("DEV_DECIDE_MODEL")
+    """The fast model for a backend: env DEV_DECIDE_MODEL_<BACKEND>, then DEV_DECIDE_MODEL, then policy "model"
+    (a dict per backend, or one name for all). Claude backends default to Haiku; the others have no default."""
+    env = os.environ.get("DEV_DECIDE_MODEL_" + backend.upper()) or os.environ.get("DEV_DECIDE_MODEL")
     m = policy.get("model")
     if isinstance(m, dict):
         m = m.get(backend)
@@ -263,7 +265,9 @@ def model_for(policy, backend):
         if not value:
             return API_MODELS["haiku"]
         return API_MODELS.get(value, value)
-    return value or "haiku"
+    if backend == "cli":
+        return value or "haiku"
+    return value or ""
 
 
 # ---------------------------------------------------------------- paths

@@ -39,6 +39,11 @@ Then use it in any repository, for example `/dev-decide pr :: DIFF` or `/dev-dec
 
 - **Your own key.** Nothing here uses anyone else's credentials. By default it asks Claude through your own Claude
   Code sign-in. To use the API instead, set `ANTHROPIC_API_KEY` in your shell. Never commit the key.
+- **Other models.** Claude is the default, but the model tier also works with any OpenAI-compatible endpoint
+  (OpenAI, Azure, Groq, Together, OpenRouter, Mistral, DeepSeek, or a local Ollama, LM Studio or vLLM), Gemini, or
+  any model CLI such as Codex. See "Other models" in `dev-decide-v5/README.md`.
+- **Other tools.** `mcp_server.py` serves dev-decide over MCP, so Cursor, Codex CLI, Gemini CLI, Windsurf and other
+  MCP clients can call it. See "Use it from other tools (MCP)" in `dev-decide-v5/README.md`.
 - **Needs** Python 3.8+ (found as `python3`, `python` or `py -3`) and git, and Git Bash or WSL on Windows.
 - **Starter models are built in.** The first time it runs in a repository it copies in pretrained models
   (`skill/starter-models/`, 2.6 MB), so `issue_type` is answered locally from day one. The other models switch on by

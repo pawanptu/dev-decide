@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **Other models.** Three new backends next to Claude, which stays the default: `openai` (any OpenAI-compatible
+  Chat Completions endpoint: OpenAI, Azure OpenAI's v1 endpoint, Groq, Together, OpenRouter, Mistral, DeepSeek, or
+  a local Ollama, LM Studio or vLLM server), `gemini` (Google's Gemini API) and `command` (any model CLI, such as
+  Codex CLI, with the prompt on stdin). Each takes its model from `model.<backend>` or `DEV_DECIDE_MODEL_<BACKEND>`
+  and escalates only when a stronger model is named (`escalate.<backend>` or `DEV_DECIDE_STRONG_MODEL_<BACKEND>`).
+  Newer OpenAI models that refuse `max_tokens` or a fixed temperature are retried with what they accept.
+- **MCP server** (`scripts/mcp_server.py`, standard library only): `decide`, `correct` and `catalog` tools over
+  stdio, for Cursor, Codex CLI, Gemini CLI, Windsurf, Claude Desktop and other MCP clients. `@path` inputs are
+  refused, so an agent's tool call cannot read arbitrary files.
+- **Bring your own OpenAI or Gemini key** to the HTTP API (`X-OpenAI-Api-Key`, `X-Gemini-Api-Key`), alongside
+  `X-Anthropic-Api-Key`. The key reaches only the endpoint and model the server is set up with; `/health` lists
+  which providers' keys it takes (`own_keys`), and the web console has a provider picker.
+
+### Security
+- Where a key is sent (`openai.base_url`, `openai.key_env`, `gemini.base_url`) and which program runs (`command`)
+  are read only from the environment or the personal `~/.claude/dev-decide.json`, never from a repository's
+  `.claude/dev-decide.json`. A backend that is named but not set up answers nothing rather than falling back to
+  another provider.
+
 ## 5.2.0 (25 October 2026)
 
 ### Added

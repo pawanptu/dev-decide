@@ -324,6 +324,176 @@ def limit_messages():
           not llm._limit_message("issue_type choose bug=0.9 _rest=0.1"))
 
 
+LINES = {"sure": "issue_type choose bug=0.9 _rest=0.1", "unsure": "issue_type choose bug=0.4 _rest=0.6"}
+ISSUE = "Login returns 500 for users with a plus sign in their email"
+
+
+def _fake_llm():
+    """A local stand-in for OpenAI-compatible and Gemini endpoints. Returns (server, base URL, list of requests)."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    seen = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+            seen.append({"path": self.path, "headers": dict(self.headers), "body": body})
+            model = body.get("model") or self.path.split("/models/")[-1].split(":")[0]
+            if model == "picky-model" and "max_tokens" in body:  # like newer OpenAI models
+                return self._reply(400, {"error": {"message": "Unsupported parameter: 'max_tokens'. Use "
+                                                              "'max_completion_tokens' instead."}})
+            text = LINES["unsure" if model == "unsure-model" else "sure"]
+            if self.path.endswith("/chat/completions"):
+                return self._reply(200, {"choices": [{"message": {"content": text}}],
+                                         "usage": {"prompt_tokens": 10, "completion_tokens": 5}})
+            if self.path.endswith(":generateContent"):
+                return self._reply(200, {"candidates": [{"content": {"parts": [{"text": text}]}, "finishReason": "STOP"}]})
+            self._reply(404, {"error": "no such path"})
+
+        def _reply(self, code, obj):
+            data = json.dumps(obj).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+    srv = HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv, "http://127.0.0.1:%d" % srv.server_address[1], seen
+
+
+def other_backends():
+    srv, base, seen = _fake_llm()
+    home = Path(tempfile.mkdtemp(prefix="dd-smoke-home-"))  # no personal settings leak in from this machine
+    repo = git_repo()
+    (repo / ".claude").mkdir()
+    # A repository's own settings must not redirect a key or name a program to run.
+    (repo / ".claude" / "dev-decide.json").write_text(json.dumps({
+        "openai": {"base_url": "http://127.0.0.1:9/v1", "key_env": "PATH"}, "gemini": {"base_url": "http://127.0.0.1:9"},
+        "command": ["python", "-c", "open('pwned','w')"]}), encoding="utf-8")
+    env = dict(ENV, HOME=str(home), USERPROFILE=str(home), DEV_DECIDE_ESCALATE="0")
+    for var in ("OPENAI_BASE_URL", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "DEV_DECIDE_COMMAND",
+                "DEV_DECIDE_MODEL", "DEV_DECIDE_OPENAI_BASE_URL", "DEV_DECIDE_GEMINI_BASE_URL"):
+        env.pop(var, None)
+
+    def run(extra, request="+llm +nocache issue_type :: " + ISSUE):
+        out = subprocess.run([sys.executable, str(SCRIPTS / "decide.py"), request], cwd=str(repo),
+                             env=dict(env, **extra), capture_output=True, text=True, encoding="utf-8", timeout=120)
+        return json.loads(out.stdout)
+
+    def answered(out, backend):
+        a = (out.get("answers") or {}).get("issue_type") or {}
+        return a.get("choice") == "bug" and str((out.get("meta") or {}).get("backend") or "").startswith(backend)
+
+    try:
+        openai = {"DEV_DECIDE_BACKEND": "openai", "OPENAI_BASE_URL": base + "/v1", "OPENAI_API_KEY": "sk-test-0123456789",
+                  "DEV_DECIDE_MODEL_OPENAI": "test-model"}
+        out = run(openai)
+        req = seen[-1] if seen else {}
+        check("openai backend: answers through an OpenAI-compatible endpoint", answered(out, "openai:test-model"),
+              json.dumps(out.get("meta"))[:160])
+        check("openai backend: sends the key, the model and the system prompt",
+              req.get("headers", {}).get("Authorization") == "Bearer sk-test-0123456789" and
+              req.get("body", {}).get("model") == "test-model" and
+              (req.get("body", {}).get("messages") or [{}])[0].get("role") == "system")
+        (home / ".claude").mkdir()
+        (home / ".claude" / "dev-decide.json").write_text(json.dumps({"openai": {"base_url": base + "/v1"}}),
+                                                           encoding="utf-8")
+        out = run(dict(openai, OPENAI_BASE_URL=""))
+        run({"DEV_DECIDE_BACKEND": "command"})
+        check("a repository's settings cannot redirect a key or run a program; personal settings can",
+              answered(out, "openai") and len(seen) == 2 and seen[-1]["headers"].get("Authorization") ==
+              "Bearer sk-test-0123456789" and not (repo / "pwned").exists())
+        (home / ".claude" / "dev-decide.json").unlink()
+        n = len(seen)
+        out = run(dict(openai, DEV_DECIDE_MODEL_OPENAI="picky-model"))
+        check("openai backend: retries with max_completion_tokens when a model asks for it",
+              answered(out, "openai") and len(seen) == n + 2 and "max_completion_tokens" in seen[-1]["body"])
+        out = run(dict(openai, DEV_DECIDE_MODEL_OPENAI=""))
+        check("openai backend: a missing model name is reported, not guessed",
+              "no openai model set" in json.dumps(out.get("meta")), json.dumps(out.get("meta"))[:160])
+        n = len(seen)
+        out = run({"DEV_DECIDE_BACKEND": "openai"})
+        check("a named backend that is not set up never falls back to another provider",
+              len(seen) == n and not answered(out, "openai"))
+
+        n = len(seen)
+        esc = dict(openai, DEV_DECIDE_MODEL_OPENAI="unsure-model", DEV_DECIDE_ESCALATE="1")
+        run(esc)
+        check("escalation is skipped when no stronger model is named for the backend", len(seen) == n + 1)
+        n = len(seen)
+        run(dict(esc, DEV_DECIDE_STRONG_MODEL_OPENAI="test-model"))
+        check("escalation uses the backend's stronger model when one is named",
+              len(seen) == n + 2 and seen[-1]["body"].get("model") == "test-model")
+
+        out = run({"DEV_DECIDE_BACKEND": "gemini", "DEV_DECIDE_GEMINI_BASE_URL": base + "/v1beta",
+                   "GEMINI_API_KEY": "gem-test-0123456789", "DEV_DECIDE_MODEL_GEMINI": "gem-model"})
+        req = seen[-1] if seen else {}
+        check("gemini backend: answers through the Gemini API", answered(out, "gemini:gem-model") and
+              req.get("path") == "/v1beta/models/gem-model:generateContent" and
+              req.get("headers", {}).get("X-Goog-Api-Key", req.get("headers", {}).get("x-goog-api-key")) == "gem-test-0123456789",
+              json.dumps(out.get("meta"))[:160])
+
+        cli = home / "fake_cli.py"
+        cli.write_text("import sys\nprompt = sys.stdin.read()\n"
+                       "print('" + LINES["sure"] + "' if sys.argv[1] == 'cli-model' and 'issue_type' in prompt else 'no')\n",
+                       encoding="utf-8")
+        out = run({"DEV_DECIDE_BACKEND": "command", "DEV_DECIDE_COMMAND": json.dumps([sys.executable, str(cli), "{model}"]),
+                   "DEV_DECIDE_MODEL_COMMAND": "cli-model"})
+        check("command backend: runs another model CLI with the prompt on stdin", answered(out, "command:cli-model"),
+              json.dumps(out.get("meta"))[:160])
+    finally:
+        srv.shutdown()
+        shutil.rmtree(str(repo), ignore_errors=True)
+        shutil.rmtree(str(home), ignore_errors=True)
+
+
+def mcp():
+    repo = git_repo()
+    msgs = [{"jsonrpc": "2.0", "id": 1, "method": "initialize",
+             "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "smoke", "version": "1"}}},
+            {"jsonrpc": "2.0", "method": "notifications/initialized"},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+            {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "decide", "arguments": {
+                "questions": "issue_type", "input": ISSUE, "mode": "local"}}},
+            {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "decide", "arguments": {
+                "questions": "issue_type", "input": "@/etc/passwd"}}},
+            {"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "catalog", "arguments": {}}},
+            {"jsonrpc": "2.0", "id": 6, "method": "no/such"}]
+    try:
+        proc = subprocess.run([sys.executable, str(SCRIPTS / "mcp_server.py"), "--cwd", str(repo)], env=ENV,
+                              input="\n".join(json.dumps(m) for m in msgs) + "\n", capture_output=True, text=True,
+                              encoding="utf-8", timeout=120)
+        replies = {}
+        bad = []
+        for line in proc.stdout.splitlines():
+            try:
+                r = json.loads(line)
+                replies[r.get("id")] = r
+            except ValueError:
+                bad.append(line)
+        init = (replies.get(1) or {}).get("result") or {}
+        check("mcp: initializes, and stdout carries nothing but protocol messages",
+              init.get("protocolVersion") == "2025-06-18" and "tools" in init.get("capabilities", {}) and not bad,
+              (bad[:1] or [proc.stderr[-200:]])[0])
+        names = [t["name"] for t in ((replies.get(2) or {}).get("result") or {}).get("tools", [])]
+        check("mcp: lists decide, correct and catalog", names == ["decide", "correct", "catalog"], str(names))
+        res = (replies.get(3) or {}).get("result") or {}
+        check("mcp: decide returns typed answers",
+              not res.get("isError") and "issue_type" in (res.get("structuredContent") or {}).get("answers", {}),
+              json.dumps(res)[:200])
+        check("mcp: refuses @path inputs", ((replies.get(4) or {}).get("result") or {}).get("isError") is True)
+        cat = ((replies.get(5) or {}).get("result") or {}).get("structuredContent") or {}
+        check("mcp: catalog lists bundles and presets", "pr" in cat.get("bundles", {}) and "risk" in cat.get("score", []))
+        check("mcp: unknown methods get a JSON-RPC error", (replies.get(6) or {}).get("error", {}).get("code") == -32601)
+    finally:
+        shutil.rmtree(str(repo), ignore_errors=True)
+
+
 def state_sync():
     sys.path.insert(0, str(SCRIPTS))
     import statesync
@@ -424,6 +594,11 @@ def server():
                                      "Content-Type": "application/json"},
                       json.dumps({"state": "x y z w", "questions": ["issue_type"]}).encode())
         check("own key: a malformed key is refused", code == 400)
+        code, _ = get("/v1/decide", {"Authorization": "Bearer " + demo, "X-Anthropic-Api-Key": "sk-ant-" + "a" * 30,
+                                     "X-OpenAI-Api-Key": "b" * 30, "Content-Type": "application/json"},
+                      json.dumps({"state": "x y z w", "questions": ["issue_type"]}).encode())
+        check("own key: two key headers are refused", code == 400)
+        check("health lists whose keys a caller may bring", health.get("own_keys") == ["anthropic"], str(health.get("own_keys")))
     finally:
         proc.terminate()
         proc.wait(timeout=10)
@@ -432,8 +607,8 @@ def server():
 
 if __name__ == "__main__":
     for step in (manifests, plugin_in_sync, first_run, hook_writes_nothing, secrets, rollback, routing, short_issues,
-                 starter_upgrade, optional_route_model, gate_guesses, limit_messages, state_sync, decision_graph,
-                 hint_server, server):
+                 starter_upgrade, optional_route_model, gate_guesses, limit_messages, other_backends, mcp, state_sync,
+                 decision_graph, hint_server, server):
         try:
             step()
         except Exception as exc:

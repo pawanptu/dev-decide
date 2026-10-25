@@ -185,10 +185,16 @@ def _escalate(work, req, cat, ctx, flags, policy, root, llm_info):
         keys = learn.escalation_keys(policy, cat, req.questions, req.bundles, st.decided)
         if keys:
             plan.append(_Retry(st, keys))
-    if not plan or not learn.claim_escalation(root, policy):
+    if not plan:
         return
     import llm
-    results, info = llm.ask(plan, req.questions, ctx, flags, learn.strong_policy(policy), root)
+    strong = learn.strong_policy(policy)
+    backend = llm.backend_choice(policy)
+    if backend != "mock" and not strong["_force_model"].get(backend):
+        return  # no stronger model named for this backend (escalate.<backend>)
+    if not learn.claim_escalation(root, policy):
+        return
+    results, info = llm.ask(plan, req.questions, ctx, flags, strong, root)
     by_index = {st.index: st for st in work}
     n = 0
     for r in plan:
@@ -247,10 +253,11 @@ def _trace(root, policy, req, out, items, facts=None):
         pass  # the graph must never break a decision
 
 
-def decide(text=None, spec=None, cwd=None, extra_flags=(), use_cache=True, api_key=None, ephemeral=False):
-    """One decision. api_key: the caller's own Anthropic key, used for this request's model calls only (never
-    stored or logged). ephemeral: keep nothing about the request (no learning, cache, decision log or features),
-    as for public demo visitors."""
+def decide(text=None, spec=None, cwd=None, extra_flags=(), use_cache=True, api_key=None, ephemeral=False,
+           api_provider="anthropic"):
+    """One decision. api_key: the caller's own key for api_provider (anthropic, openai or gemini), used for this
+    request's model calls only (never stored or logged). ephemeral: keep nothing about the request (no learning,
+    cache, decision log or features), as for public demo visitors."""
     t0 = time.perf_counter()
     cwd = str(cwd or os.getcwd())
     root = dd.project_root(cwd)
@@ -362,7 +369,7 @@ def decide(text=None, spec=None, cwd=None, extra_flags=(), use_cache=True, api_k
         if L.enabled:
             ctx["precedents"] = L.precedents(work, req.questions)
             L.start_spot_checks(routes)
-        llm_policy = dict(policy, _api_key=api_key) if api_key else policy  # never part of a cache key or log
+        llm_policy = dict(policy, _api_key=api_key, _api_provider=api_provider) if api_key else policy  # never part of a cache key or log
         results, llm_info = llm.ask(work, req.questions, ctx, flags, llm_policy, root)
         skipped = []
         for st in work:

@@ -1443,6 +1443,7 @@ ESCALATE_DEFAULTS = {
     "below": 0.6,             # escalate an answer whose confidence is below this
     "per_day": 30,            # stronger-model calls per day, at most one per request
     "cli": "sonnet", "api": "claude-sonnet-5-5",
+    "openai": "", "gemini": "", "command": "",  # other backends escalate only once a stronger model is named
     "presets": ["route", "risk", "breaking_change", "security_relevant", "secret_leak", "review_verdict", "severity",
                 "issue_type", "production_impact", "excessive_agency", "prompt_injection_exposure",
                 "agent_autonomy_risk", "unvalidated_model_output", "pii_in_ai_data", "ml_data_leakage",
@@ -1513,7 +1514,8 @@ def claim_escalation(root, policy):
 def strong_policy(policy):
     cfg = escalate_config(policy)
     out = dict(policy or {})
-    out["_force_model"] = {"cli": cfg["cli"], "api": cfg["api"]}
+    out["_force_model"] = {b: os.environ.get("DEV_DECIDE_STRONG_MODEL_" + b.upper()) or cfg[b]
+                           for b in ("cli", "api", "openai", "gemini", "command")}
     return out
 
 

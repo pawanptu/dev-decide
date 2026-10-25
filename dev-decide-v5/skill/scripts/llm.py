@@ -1,13 +1,25 @@
 """System 2: one lean model call for the questions the local stage could not settle.
 
 Backends (policy "backend" or env DEV_DECIDE_BACKEND; default auto):
-  api   Anthropic Messages API via ANTHROPIC_API_KEY, prompt-cached system prompt. Fastest.
-  cli   `claude -p` with your Claude Code sign-in: Haiku, no tools, no settings, one turn.
-  mock  canned answers for tests (DEV_DECIDE_MOCK=<file of decision lines>, or generated).
-  none  no model; the engine falls back to local hints.
+  api      Anthropic Messages API via ANTHROPIC_API_KEY, prompt-cached system prompt. Fastest.
+  cli      `claude -p` with your Claude Code sign-in: Haiku, no tools, no settings, one turn.
+  openai   any OpenAI-compatible Chat Completions endpoint: OpenAI, Azure OpenAI (v1 endpoint), Groq, Together,
+           OpenRouter, Mistral, DeepSeek, or a local Ollama, LM Studio or vLLM server. OPENAI_API_KEY, OPENAI_BASE_URL.
+  gemini   Google's Gemini API via GEMINI_API_KEY (or GOOGLE_API_KEY).
+  command  another model CLI (codex, gemini, ollama run, ...) named in DEV_DECIDE_COMMAND: the prompt goes in on
+           stdin and the reply comes back on stdout.
+  mock     canned answers for tests (DEV_DECIDE_MOCK=<file of decision lines>, or generated).
+  none     no model; the engine falls back to local hints.
+auto keeps Claude: the API when ANTHROPIC_API_KEY is set, else Claude Code. The others are chosen by name.
+
+Where a key is sent and which program runs are read only from the environment or your personal
+~/.claude/dev-decide.json, never from a repository's .claude/dev-decide.json: a cloned repository must not be able
+to send your key to its own server or run a program of its choosing.
 """
 import json
 import os
+import re
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -27,6 +39,10 @@ CHILD_ENV_DROP = ("CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN",
                   "CLAUDE_CODE_TEE_SDK_STDOUT")
 RETRY_REMINDER = ("\n\nReminder: your reply must be decision lines only, exactly one line per listed key, "
                   "in the line format shown for each question.")
+OPENAI_URL = "https://api.openai.com/v1"
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta"
+BACKENDS = ("api", "cli", "openai", "gemini", "command")
+RETRY_CODES = (429, 500, 502, 503, 529)
 
 
 class LLMError(Exception):
@@ -43,19 +59,79 @@ def _limit_message(text):
     return len(low) < 300 and any(m in low for m in LIMIT_MARKERS)
 
 
+def _trusted(name):
+    """A setting that decides where a key goes or what runs: from your personal ~/.claude/dev-decide.json only."""
+    user = dd.read_json(dd.home_claude() / "dev-decide.json")
+    return user.get(name) if isinstance(user, dict) else None
+
+
+def _openai_conf():
+    """(base URL, key) for the OpenAI-compatible backend."""
+    cfg = _trusted("openai")
+    cfg = cfg if isinstance(cfg, dict) else {}
+    base = (os.environ.get("DEV_DECIDE_OPENAI_BASE_URL") or os.environ.get("OPENAI_BASE_URL")
+            or cfg.get("base_url") or OPENAI_URL)
+    key_env = os.environ.get("DEV_DECIDE_OPENAI_KEY_ENV") or cfg.get("key_env") or "OPENAI_API_KEY"
+    return str(base).rstrip("/"), os.environ.get(str(key_env), "")
+
+
+def _gemini_conf():
+    cfg = _trusted("gemini")
+    cfg = cfg if isinstance(cfg, dict) else {}
+    base = os.environ.get("DEV_DECIDE_GEMINI_BASE_URL") or cfg.get("base_url") or GEMINI_URL
+    return str(base).rstrip("/"), os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or ""
+
+
+def _command():
+    """The model CLI to run, as an argument list, or None."""
+    raw = os.environ.get("DEV_DECIDE_COMMAND")
+    if raw:
+        raw = raw.strip()
+        if raw.startswith("["):
+            try:
+                raw = json.loads(raw)
+            except ValueError:
+                return None
+        else:
+            raw = shlex.split(raw, posix=os.name != "nt")
+    else:
+        raw = _trusted("command")
+        if isinstance(raw, str):
+            raw = shlex.split(raw, posix=os.name != "nt")
+    if not isinstance(raw, list) or not raw or not all(isinstance(a, str) for a in raw):
+        return None
+    return list(raw)
+
+
+def _available(backend):
+    if backend == "api":
+        return bool(os.environ.get("ANTHROPIC_API_KEY"))
+    if backend == "cli":
+        return bool(shutil.which("claude"))
+    if backend == "openai":
+        base, key = _openai_conf()
+        return bool(key) or base != OPENAI_URL  # a self-hosted server (Ollama, vLLM) often needs no key
+    if backend == "gemini":
+        return bool(_gemini_conf()[1])
+    if backend == "command":
+        return _command() is not None
+    return False
+
+
 def backend_choice(policy):
-    if (policy or {}).get("_api_key"):  # the caller's own key (bring-your-own-key): this request uses the API
-        return "api"
+    policy = policy or {}
+    if policy.get("_api_key"):  # the caller's own key (bring-your-own-key): this request uses that provider
+        return {"openai": "openai", "gemini": "gemini"}.get(policy.get("_api_provider"), "api")
     forced = (os.environ.get("DEV_DECIDE_BACKEND") or str(policy.get("backend") or "auto")).lower()
-    has_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
-    has_cli = bool(shutil.which("claude"))
-    if forced == "mock" or forced == "none":
+    if forced in ("mock", "none"):
         return forced
-    if forced == "api":
-        return "api" if has_key else ("cli" if has_cli else "none")
+    if forced in BACKENDS and _available(forced):
+        return forced
+    if forced in ("openai", "gemini", "command"):
+        return "none"  # named but not set up: never fall back to sending the input to a different provider
     if forced == "cli":
-        return "cli" if has_cli else ("api" if has_key else "none")
-    return "api" if has_key else ("cli" if has_cli else "none")
+        return "cli" if _available("cli") else ("api" if _available("api") else "none")
+    return "api" if _available("api") else ("cli" if _available("cli") else "none")
 
 
 def describe(q, routes):
@@ -200,36 +276,126 @@ def _call_cli(system, user, model, root, deep, timeout, effort=None):
     return text, info
 
 
-def _call_api(system, user, model, timeout, key=None):
+class _HTTPRefused(LLMError):
+    def __init__(self, code, detail):
+        LLMError.__init__(self, "API error %d: %s" % (code, detail))
+        self.code, self.detail = code, detail
+
+
+def _post_json(url, body, headers, timeout):
+    """POST JSON and return the decoded reply, retrying once on rate limits and overloads."""
     import urllib.error
     import urllib.request
+    headers = dict(headers, **{"content-type": "application/json"})
+    for attempt in (0, 1):
+        req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"), method="POST", headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", "replace")[:300]
+            if exc.code in RETRY_CODES and attempt == 0:
+                time.sleep(1.0)
+                continue
+            raise _HTTPRefused(exc.code, detail)
+        except urllib.error.URLError as exc:
+            raise LLMError("API unreachable: %s" % exc.reason)
+        except ValueError:
+            raise LLMError("API reply was not JSON")
+        except Exception as exc:
+            raise LLMError("API call failed: %s" % type(exc).__name__)
+
+
+def _call_api(system, user, model, timeout, key=None):
     key = key or os.environ.get("ANTHROPIC_API_KEY", "")
     url = os.environ.get("DEV_DECIDE_API_URL") or "https://api.anthropic.com/v1/messages"
     body = {"model": model, "max_tokens": 2048, "temperature": 0,
             "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
             "messages": [{"role": "user", "content": user}]}
-    data = None
-    for attempt in (0, 1):
-        req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"), method="POST", headers={
-            "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"})
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-            break
-        except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", "replace")[:300]
-            if exc.code in (429, 500, 502, 503, 529) and attempt == 0:
-                time.sleep(1.0)
-                continue
-            raise LLMError("API error %d: %s" % (exc.code, detail))
-        except urllib.error.URLError as exc:
-            raise LLMError("API unreachable: %s" % exc.reason)
-        except Exception as exc:
-            raise LLMError("API call failed: %s" % type(exc).__name__)
+    data = _post_json(url, body, {"x-api-key": key, "anthropic-version": "2023-06-01"}, timeout)
     text = "".join(b.get("text", "") for b in (data or {}).get("content", []) if b.get("type") == "text")
     usage = (data or {}).get("usage") or {}
     return text, {"input_tokens": usage.get("input_tokens"), "output_tokens": usage.get("output_tokens"),
                   "cache_read_tokens": usage.get("cache_read_input_tokens")}
+
+
+def _call_openai(system, user, model, timeout, key=None):
+    base, env_key = _openai_conf()
+    key = key or env_key
+    headers = {"Authorization": "Bearer " + key} if key else {}
+    if key and re.match(r"^https://[^/]+\.azure\.com/", base):
+        headers["api-key"] = key  # Azure OpenAI takes its keys in this header
+    body = {"model": model, "temperature": 0, "max_tokens": 2048,
+            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
+    for _ in range(3):  # newer models refuse max_tokens or a fixed temperature; adjust once for each
+        try:
+            data = _post_json(base + "/chat/completions", body, headers, timeout)
+            break
+        except _HTTPRefused as exc:
+            if exc.code != 400:
+                raise
+            if "max_tokens" in body and "max_completion_tokens" in exc.detail:
+                body["max_completion_tokens"] = body.pop("max_tokens")
+            elif "temperature" in body and "temperature" in exc.detail:
+                del body["temperature"]
+            else:
+                raise
+    else:
+        raise LLMError("the endpoint refused every request shape")
+    choice = ((data or {}).get("choices") or [{}])[0]
+    content = (choice.get("message") or {}).get("content") or ""
+    if isinstance(content, list):  # some servers return content parts
+        content = "".join(p.get("text", "") for p in content if isinstance(p, dict))
+    usage = (data or {}).get("usage") or {}
+    return content, {"input_tokens": usage.get("prompt_tokens"), "output_tokens": usage.get("completion_tokens")}
+
+
+def _call_gemini(system, user, model, timeout, key=None):
+    base, env_key = _gemini_conf()
+    body = {"systemInstruction": {"parts": [{"text": system}]},
+            "contents": [{"role": "user", "parts": [{"text": user}]}],
+            "generationConfig": {"temperature": 0, "maxOutputTokens": 2048}}
+    data = _post_json("%s/models/%s:generateContent" % (base, model), body, {"x-goog-api-key": key or env_key},
+                      timeout)
+    cands = (data or {}).get("candidates") or []
+    parts = ((cands[0].get("content") or {}).get("parts") or []) if cands else []
+    text = "".join(p.get("text", "") for p in parts if isinstance(p, dict) and not p.get("thought"))
+    if not text and cands and cands[0].get("finishReason") not in (None, "STOP", "MAX_TOKENS"):
+        raise LLMError("Gemini returned no answer (%s)" % cands[0].get("finishReason"))
+    usage = (data or {}).get("usageMetadata") or {}
+    return text, {"input_tokens": usage.get("promptTokenCount"), "output_tokens": usage.get("candidatesTokenCount")}
+
+
+def _call_command(system, user, model, root, timeout):
+    """Run a model CLI: the prompt on stdin (or in place of {prompt}), the reply from stdout."""
+    argv = _command()
+    if not argv:
+        raise LLMError("DEV_DECIDE_COMMAND is not set")
+    if any("{model}" in a for a in argv) and not model:
+        raise LLMError("the command uses {model}: set model.command or DEV_DECIDE_MODEL_COMMAND")
+    prompt = system + "\n\n---\n\n" + user
+    exe = shutil.which(argv[0]) or argv[0]
+    inline = any("{prompt}" in a for a in argv)
+    if inline and os.name == "nt" and exe.lower().endswith((".cmd", ".bat")):
+        raise LLMError("{prompt} cannot be passed to a .cmd or .bat program; let it read the prompt from stdin")
+    args = [exe] + [a.replace("{model}", model or "").replace("{prompt}", prompt) for a in argv[1:]]
+    env = dict(os.environ)
+    env["DEV_DECIDE_CHILD"] = "1"
+    for var in CHILD_ENV_DROP:
+        env.pop(var, None)
+    try:
+        proc = subprocess.run(args, input=None if inline else prompt, capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=timeout, cwd=str(root), env=env)
+    except subprocess.TimeoutExpired:
+        raise LLMError("model command timed out after %ds" % timeout)
+    except OSError as exc:
+        raise LLMError("model command could not start: %s" % exc)
+    text = (proc.stdout or "").strip()
+    if proc.returncode != 0 and not text:
+        raise LLMError((proc.stderr or "").strip()[:300] or "%s exited with code %d" % (argv[0], proc.returncode))
+    if _limit_message(text):
+        raise LLMError(text[:300])
+    return text, {}
 
 
 def _oracle():
@@ -290,17 +456,24 @@ def _mock_lines(chunk, questions, batch, strong=False):
 def call_model(system, user, policy, root, deep=False, timeout=None):
     backend = backend_choice(policy)
     forced = policy.get("_force_model") or {}  # escalation to a stronger model (engine._escalate)
+    model = forced.get(backend) or dd.model_for(policy, backend)
     if backend == "api":
-        model = forced.get("api") or dd.model_for(policy, "api")
         text, info = _call_api(system, user, model, timeout or 60, key=policy.get("_api_key"))
     elif backend == "cli":
-        model = forced.get("cli") or dd.model_for(policy, "cli")
         effort = os.environ.get("DEV_DECIDE_EFFORT", policy.get("effort", "low"))
         text, info = _call_cli(system, user, model, root, deep, timeout or (150 if deep else 60),
                                effort=None if str(effort).lower() in ("", "default", "none") else effort)
+    elif backend in ("openai", "gemini"):
+        if not model:
+            raise LLMError("no %s model set: put \"model\": {\"%s\": \"<model name>\"} in ~/.claude/dev-decide.json "
+                           "or set DEV_DECIDE_MODEL_%s" % (backend, backend, backend.upper()))
+        call = _call_openai if backend == "openai" else _call_gemini
+        text, info = call(system, user, model, timeout or 60, key=policy.get("_api_key"))
+    elif backend == "command":
+        text, info = _call_command(system, user, model, root, timeout or 120)
     else:
         raise LLMError("no model backend available")
-    info["backend"] = "%s:%s" % (backend, model)
+    info["backend"] = "%s:%s" % (backend, model) if model else backend
     return text, info
 
 
@@ -372,7 +545,8 @@ def ask(work, questions, ctx, flags, policy, root):
 
     results, infos, errors = {}, [], []
     if backend == "none":
-        return results, {"backend": "none", "error": "no model backend available (install Claude Code or set ANTHROPIC_API_KEY)"}
+        return results, {"backend": "none", "error": "no model backend available (install Claude Code, set "
+                                                     "ANTHROPIC_API_KEY, or set up another backend: see 'backend')"}
     from concurrent.futures import ThreadPoolExecutor
     workers = min(MAX_PARALLEL, len(chunks)) or 1
     with ThreadPoolExecutor(max_workers=workers) as ex:

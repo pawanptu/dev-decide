@@ -460,8 +460,11 @@
           <input x-ref="token" type="password" autocomplete="off" placeholder="Paste your DEV_DECIDE_TOKEN" x-show="!usingDemo()" x-model="token" @input="tokenInput">
         </div>
         <div>
-          <label class="lbl" for="apikey">Your Anthropic API key <span style="font-weight:400;color:var(--dim)">(optional)</span></label>
-          <input id="apikey" type="password" autocomplete="off" placeholder="sk-ant-… lets Claude answer what stays unsure" x-model="apiKey" @input="fixMode">
+          <label class="lbl" for="apikey">Your own API key <span style="font-weight:400;color:var(--dim)">(optional)</span></label>
+          <select aria-label="Key provider" style="margin-bottom:8px" x-show="providers().length > 1" x-model="keyProvider">
+            <template x-for="p in providers()" :key="p"><option :value="p" x-text="providerName(p)"></option></template>
+          </select>
+          <input id="apikey" type="password" autocomplete="off" :placeholder="keyPlaceholder()" x-model="apiKey" @input="fixMode">
           <div class="hint">Sent in a header with each request and used for that request only. Never stored by this page or the server.</div>
         </div>
       </div>

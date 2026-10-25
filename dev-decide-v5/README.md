@@ -384,14 +384,15 @@ See `examples/dev-decide.json`.
 - `thresholds`: per-preset abstain levels.
 - `routes`: extra, exclude, builtins.
 - `presets`, `bundles`, `gates`: your own.
-- `backend`: `auto`, `cli`, `api` or `none`.
-- `model`: for example `{"cli": "haiku", "api": "claude-haiku-5-5"}`.
+- `backend`: `auto`, `cli`, `api`, `openai`, `gemini`, `command` or `none` (see "Other models" below).
+- `model`: for example `{"cli": "haiku", "api": "claude-haiku-5-5", "openai": "gpt-4.1-mini"}`.
 - `effort`, `capture`, `cache_ttl_hours`, `router_hook`, `log`.
 - `learning`: `enabled` (true), `target` (0.9), `auto_promote` (true; false waits for `promote <preset>`),
   `audit_rate` (0.05), `audits_per_day` (20), `keep_text` (true), `memory` (true), `memory_similarity` (0.80),
   `recent` (20), `recent_hours` (24), `audit_ttl_days` (7), `episodic` (true), `adapt` (true),
   `targeted_checks` (true), `novelty_floor` (0.55). Learning-rate settings `lr`, `g0` and `l2` are for experts.
 - `escalate`: `enabled` (true), `below` (0.6), `per_day` (30), `cli` ("sonnet"), `api` ("claude-sonnet-5-5"),
+  `openai`, `gemini`, `command` (empty: those backends escalate only once you name a stronger model),
   `presets` (the decisions that may escalate), or `false`.
 - Meaning features need `skill/semantic/potion-base-8M/` (bundled) or `DEV_DECIDE_SEMANTIC=/path/to/model`.
   Without it, models that use meaning features do not answer and those questions go to Claude.
@@ -401,6 +402,75 @@ A user-wide `~/.claude/dev-decide.json` also works, and the project file wins wh
 Backends:
 - **cli** (default): uses your Claude Code sign-in through `claude -p` with Haiku, no tools, no settings and one turn. About 1.7 s of each call is CLI startup.
 - **api**: used automatically when `ANTHROPIC_API_KEY` is set. It's faster and uses prompt caching, so it's best for CI and your apps.
+- **openai**, **gemini**, **command**: other models, chosen by name. See below.
+
+### Other models
+
+Claude stays the default. To use another model, name its backend in `"backend"` (or `DEV_DECIDE_BACKEND`) and give
+the model name, which these backends have no default for. Put the settings in your personal
+`~/.claude/dev-decide.json`, or use environment variables.
+
+| Backend | Covers | Key | Model |
+|---|---|---|---|
+| `openai` | OpenAI, Azure OpenAI (v1 endpoint), Groq, Together, OpenRouter, Mistral, DeepSeek, and local Ollama, LM Studio or vLLM servers: anything that speaks the OpenAI Chat Completions format | `OPENAI_API_KEY` (or the variable named in `openai.key_env`); a self-hosted server may need none | `model.openai` or `DEV_DECIDE_MODEL_OPENAI` |
+| `gemini` | Google's Gemini API | `GEMINI_API_KEY` or `GOOGLE_API_KEY` | `model.gemini` or `DEV_DECIDE_MODEL_GEMINI` |
+| `command` | any model CLI: Codex CLI, Gemini CLI, `ollama run`, `llm`, ... The prompt goes in on stdin; the reply comes back on stdout | the CLI's own sign-in | `model.command`, used where the command says `{model}` |
+
+```jsonc
+// ~/.claude/dev-decide.json: a local Ollama server
+{"backend": "openai", "openai": {"base_url": "http://localhost:11434/v1"}, "model": {"openai": "llama3.1"}}
+
+// Groq, with its key in GROQ_API_KEY and a stronger model for hard cases
+{"backend": "openai", "openai": {"base_url": "https://api.groq.com/openai/v1", "key_env": "GROQ_API_KEY"},
+ "model": {"openai": "llama-3.1-8b-instant"}, "escalate": {"openai": "llama-3.3-70b-versatile"}}
+
+// Gemini
+{"backend": "gemini", "model": {"gemini": "gemini-2.5-flash"}, "escalate": {"gemini": "gemini-2.5-pro"}}
+
+// Codex CLI, read-only, nothing saved
+{"backend": "command",
+ "command": ["codex", "exec", "--ephemeral", "--skip-git-repo-check", "-s", "read-only", "-m", "{model}", "-"],
+ "model": {"command": "gpt-5-mini"}}
+```
+
+The model names above are examples; use the ones your provider lists. As environment variables:
+`DEV_DECIDE_BACKEND=openai OPENAI_BASE_URL=... OPENAI_API_KEY=... DEV_DECIDE_MODEL_OPENAI=...`, and
+`DEV_DECIDE_COMMAND='["ollama", "run", "{model}"]'` for a CLI (a JSON list, or a plain command line).
+
+- **Safety.** Where a key is sent (`openai.base_url`, `openai.key_env`, `gemini.base_url`) and which program runs
+  (`command`) are read only from the environment or your personal file, never from a repository's
+  `.claude/dev-decide.json`, so a cloned repository can't send your key to its own server or run a program. A
+  backend you name but haven't set up answers nothing; it never falls back to sending your input to another provider.
+- **Escalation.** Hard cases go to a stronger model only if you name one (`escalate.openai`, `escalate.gemini`,
+  `escalate.command`, or `DEV_DECIDE_STRONG_MODEL_<BACKEND>`); otherwise these backends don't escalate.
+- **Calibration is per model.** Confidence from one model doesn't mean the same as from another. After switching,
+  record corrections with `fix` and run `calibrate.py`, and measure with `tools/benchmark.py` before you rely on it.
+- **Small local models** sometimes break the answer format. The engine asks once more, then falls back to local hints.
+- `+deep` (reading repository files) works with the `cli` backend only.
+
+### Use it from other tools (MCP)
+
+`scripts/mcp_server.py` serves dev-decide over MCP (stdio), for Cursor, Codex CLI, Gemini CLI, Windsurf, Claude
+Desktop or any other MCP client. It has three tools: `decide`, `correct` and `catalog`. It uses the standard
+library only, and the model behind it follows your `backend` setting. After `install.py`, the script is at
+`~/.claude/skills/dev-decide/scripts/mcp_server.py`.
+
+```jsonc
+// Cursor (~/.cursor/mcp.json), Gemini CLI (~/.gemini/settings.json), Claude Desktop: the same shape
+{"mcpServers": {"dev-decide": {"command": "python3", "args": ["/home/you/.claude/skills/dev-decide/scripts/mcp_server.py"]}}}
+```
+
+```toml
+# Codex CLI (~/.codex/config.toml)
+[mcp_servers.dev-decide]
+command = "python3"
+args = ["/home/you/.claude/skills/dev-decide/scripts/mcp_server.py"]
+```
+
+On Windows use `python` or `py` and a `C:/Users/you/...` path. The repository is the folder the client starts the
+server in; pass `--cwd <repo>`, set `DEV_DECIDE_CWD`, or give `repo` in a tool call to choose another. Inputs are
+text, an inline `diff`, or `DIFF`, `DIFF --staged` and `COMMIT <sha>`; `@path` is refused, so an agent's tool call
+can't read arbitrary files.
 
 ## Limits
 
@@ -427,8 +497,12 @@ Backends:
   the fastest results, call `decide.py` or the API directly from hooks, CI and apps.
 - **Heuristics can be wrong.** In the default mode, the model checks every local hint. Only exact facts skip it. `+local` uses
   hints directly, so treat its uncertain answers as estimates.
-- **Privacy.** The model tier sends the input (the diff, file or text) to Anthropic, like any Claude Code
-  request. The local tiers send nothing. For sensitive repos, use `+local` or set `"backend": "none"`.
-- **Untested here.** The direct-API backend was tested against a simulated server (no API key was available), including the
-  retry and the error fallback.
+- **Privacy.** The model tier sends the input (the diff, file or text) to the provider you chose: Anthropic by
+  default, like any Claude Code request, or the endpoint or program you set up. The local tiers send nothing. For
+  sensitive repos, use `+local`, set `"backend": "none"`, or point the `openai` backend at a model on your machine.
+- **Untested here.** The direct-API, OpenAI-compatible and Gemini backends were tested against simulated servers
+  (no API keys were available), including the retry and the error fallback. The `command` backend was tested with
+  a stand-in CLI and once live through Codex CLI 0.154.0 (a made-up outage report: `issue_type bug 0.99`,
+  `severity sev1_outage 0.88`, 13.5 s, one call). No accuracy figures have been measured yet for models other
+  than Claude.
 - **`+deep`** needs the cli backend. Deep runs can take longer and are capped at 150 s.

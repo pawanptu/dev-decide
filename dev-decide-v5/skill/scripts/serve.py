@@ -23,8 +23,10 @@ Tokens:
   DEV_DECIDE_DEMO_TOKEN  optional public token for a demo (the page fills it in): answers are local only unless the
                          caller brings their own key; nothing about demo requests is stored or learned from, and
                          feedback and /v1/learning are refused.
-Bring-your-own-key: a request may carry "X-Anthropic-Api-Key: sk-ant-...". That key pays for that request's model
-calls only; it is never stored, logged or cached, and those calls do not count against the daily cap.
+Bring-your-own-key: a request may carry "X-Anthropic-Api-Key: sk-ant-...", or "X-OpenAI-Api-Key" or
+"X-Gemini-Api-Key" (one per request). That key pays for that request's model calls only; it is never stored, logged
+or cached, and those calls do not count against the daily cap. An OpenAI or Gemini key goes only to the endpoint
+and model this server is set up with (OPENAI_BASE_URL, DEV_DECIDE_MODEL_OPENAI, DEV_DECIDE_MODEL_GEMINI).
 
 Limits and modes (per server process, so a restart resets the counters):
   DEV_DECIDE_RATE_PER_MIN         requests per minute from one client address (default 30; 0 turns it off)
@@ -62,6 +64,10 @@ LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
 WARN_AT = 0.8
 API_KEY_HEADER = "X-Anthropic-Api-Key"
 API_KEY_FORMAT = re.compile(r"^sk-ant-[A-Za-z0-9_\-]{20,300}$")
+# Other providers' keys: (header, provider, format). They reach only the endpoint this server is set up with
+# (OPENAI_BASE_URL or DEV_DECIDE_GEMINI_BASE_URL on the server), and the server's model.openai / model.gemini.
+OTHER_KEY_HEADERS = (("X-OpenAI-Api-Key", "openai", re.compile(r"^[A-Za-z0-9_\-\.]{20,300}$")),
+                     ("X-Gemini-Api-Key", "gemini", re.compile(r"^[A-Za-z0-9_\-]{20,300}$")))
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "no-referrer",
@@ -201,13 +207,24 @@ def make_handler(cwd, token=None, local_only=True, limits=None, trust_proxy=Fals
             return None
 
         def _api_key(self):
-            """The caller's own Anthropic key, or None; ValueError when the header is present but malformed."""
+            """The caller's own (provider, key), or (None, None); ValueError when a key header is malformed or
+            more than one is sent."""
+            found = []
             key = (self.headers.get(API_KEY_HEADER) or "").strip()
-            if not key:
-                return None
-            if not API_KEY_FORMAT.match(key):
-                raise ValueError("the %s header does not look like an Anthropic API key (sk-ant-...)" % API_KEY_HEADER)
-            return key
+            if key:
+                if not API_KEY_FORMAT.match(key):
+                    raise ValueError("the %s header does not look like an Anthropic API key (sk-ant-...)"
+                                     % API_KEY_HEADER)
+                found.append(("anthropic", key))
+            for header, provider, fmt in OTHER_KEY_HEADERS:
+                key = (self.headers.get(header) or "").strip()
+                if key:
+                    if not fmt.match(key):
+                        raise ValueError("the %s header does not look like an API key" % header)
+                    found.append((provider, key))
+            if len(found) > 1:
+                raise ValueError("send one API key header per request, not %d" % len(found))
+            return found[0] if found else (None, None)
 
         def _client(self):
             if trust_proxy:  # the last entry is the one our own proxy added; earlier ones can be forged
@@ -232,7 +249,8 @@ def make_handler(cwd, token=None, local_only=True, limits=None, trust_proxy=Fals
         def _health(self):
             out = {"ok": True, "version": dd.VERSION, "model": "none" if server_local else _model_backend(cwd),
                    "model_calls_left": limits.model_allowed(), "model_calls": limits.usage(),
-                   "local_only": server_local, "learning": _learning_on(cwd), "byok": True}
+                   "local_only": server_local, "learning": _learning_on(cwd), "byok": True,
+                   "own_keys": _own_keys(cwd)}
             if demo_token:
                 out["demo_token"] = demo_token  # public by design: it can only get local answers
             return out
@@ -315,7 +333,7 @@ def make_handler(cwd, token=None, local_only=True, limits=None, trust_proxy=Fals
                 self._send(400 if out.get("error") else 200, out)
                 return
             try:
-                api_key = self._api_key()
+                provider, api_key = self._api_key()
             except ValueError as exc:
                 self._send(400, {"error": str(exc)})
                 return
@@ -324,15 +342,16 @@ def make_handler(cwd, token=None, local_only=True, limits=None, trust_proxy=Fals
             if api_key is None and wants_model:  # this server's own key would be used
                 if role == "demo":
                     spec["mode"] = "local"
-                    notes.append("demo token: answered locally; add your own Anthropic key to ask Claude")
+                    notes.append("demo token: answered locally; add your own API key to ask a model")
                 elif server_local:
                     spec["mode"] = "local"
-                    notes.append("this server answers locally only; add your own Anthropic key to ask Claude")
+                    notes.append("this server answers locally only; add your own API key to ask a model")
                 elif not limits.model_allowed():
                     spec["mode"] = "local"
                     notes.append("the server's daily model-call cap is reached; answered locally")
             try:
-                out = engine.decide(spec=spec, cwd=cwd, api_key=api_key, ephemeral=(role == "demo"))
+                out = engine.decide(spec=spec, cwd=cwd, api_key=api_key, api_provider=provider or "anthropic",
+                                    ephemeral=(role == "demo"))
             except Exception as exc:
                 self._send(500, {"error": "engine error: %s" % type(exc).__name__})
                 return
@@ -353,8 +372,20 @@ def make_handler(cwd, token=None, local_only=True, limits=None, trust_proxy=Fals
     return Handler
 
 
+def _own_keys(cwd):
+    """Whose keys a caller may bring: Anthropic always; OpenAI and Gemini once this server names a model for them."""
+    out = ["anthropic"]
+    try:
+        policy = dd.load_policy(dd.project_root(cwd))
+        out += [p for p in ("openai", "gemini") if dd.model_for(policy, p)]
+    except Exception:
+        pass
+    return out
+
+
 def _model_backend(cwd):
-    """Which way this server can ask Claude: api, cli or none (the page greys out model modes on none)."""
+    """Which way this server can ask a model: api, cli, openai, gemini, command or none (the page greys out model
+    modes on none)."""
     try:
         import llm
         return llm.backend_choice(dd.load_policy(dd.project_root(cwd)))

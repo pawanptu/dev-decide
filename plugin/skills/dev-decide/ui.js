@@ -19,6 +19,13 @@
             diff: "diff --git a/src/payments/client.py b/src/payments/client.py\n--- a/src/payments/client.py\n+++ b/src/payments/client.py\n@@ -21,4 +21,4 @@ def charge(amount, card):\n-    resp = requests.post(URL, json=body, timeout=10)\n+    resp = requests.post(URL, json=body, timeout=10, verify=False)\n     return resp.json()\n" }
   };
   var QUESTION_NAMES = { triage: "Triage", pr: "Pull request", incident: "Incident", plan: "Plan", route: "Route", deploy: "Deploy", risk: "Risk" };
+  var PROVIDER_NAMES = { anthropic: "Anthropic", openai: "OpenAI-compatible", gemini: "Gemini" };
+  var KEY_HEADERS = { anthropic: "X-Anthropic-Api-Key", openai: "X-OpenAI-Api-Key", gemini: "X-Gemini-Api-Key" };
+  var KEY_PLACEHOLDERS = {
+    anthropic: "sk-ant-… lets Claude answer what stays unsure",
+    openai: "Your key for this server's OpenAI-compatible model",
+    gemini: "Your Gemini API key"
+  };
   var MODE_HINT = {
     local: "Instant and free. Questions without a trusted local answer show as “not decided”.",
     hybrid: "Local first; Claude answers only what stays unsure.",
@@ -168,7 +175,7 @@
     Alpine.data("console", function () {
       return {
         health: null,
-        token: "", ownToken: session.get("dd_token"), apiKey: "", accessOpen: false,
+        token: "", ownToken: session.get("dd_token"), apiKey: "", keyProvider: "anthropic", accessOpen: false,
         shape: "single", q: "triage", mode: "local",
         stateText: "", diffText: "", batchText: "",
         loading: false, elapsed: 0, loadStep: 0,
@@ -191,13 +198,17 @@
         // access
         usingDemo: function () { return !!(this.health && this.health.demo_token && this.token === this.health.demo_token); },
         hasDemo: function () { return !!(this.health && this.health.demo_token); },
+        providers: function () { return (this.health && this.health.own_keys) || ["anthropic"]; },
+        providerName: function (p) { return PROVIDER_NAMES[p] || p; },
+        keyPlaceholder: function () { return KEY_PLACEHOLDERS[this.keyProvider] || ""; },
         accessSummary: function () {
-          if (this.usingDemo()) return this.apiKey ? "Demo token + your Anthropic key" : "Public demo token · local answers, free";
-          if (this.token) return this.apiKey ? "Your token + your Anthropic key" : "Your own token";
+          var key = "your " + this.providerName(this.keyProvider) + " key";
+          if (this.usingDemo()) return this.apiKey ? "Demo token + " + key : "Public demo token · local answers, free";
+          if (this.token) return this.apiKey ? "Your token + " + key : "Your own token";
           return "Add a token to start";
         },
         accessNote: function () {
-          return this.usingDemo() ? "Using the public demo token: local answers, free. Add your Anthropic key below to let Claude answer too."
+          return this.usingDemo() ? "Using the public demo token: local answers, free. Add your own API key below to let a model answer too."
                                   : "Using your own token.";
         },
         toggleToken: function () {
@@ -214,7 +225,7 @@
         modeLocked: function (m) { return m !== "local" && !this.canClaude(); },
         modeTitle: function (m) {
           if (!this.modeLocked(m)) return "";
-          return this.usingDemo() ? "Add your own Anthropic key (Access) to ask Claude with the demo token." : "This server cannot ask Claude right now; add your own Anthropic key.";
+          return this.usingDemo() ? "Add your own API key (Access) to ask a model with the demo token." : "This server cannot ask a model right now; add your own API key.";
         },
         toggleAccess: function () { this.accessOpen = !this.accessOpen; },
         setShape: function (s) { this.shape = s; },
@@ -242,7 +253,7 @@
         // requests
         api: function (path, body) {
           var headers = { "Authorization": "Bearer " + this.token.trim(), "Content-Type": "application/json" };
-          if (this.apiKey.trim()) headers["X-Anthropic-Api-Key"] = this.apiKey.trim();
+          if (this.apiKey.trim()) headers[KEY_HEADERS[this.keyProvider] || KEY_HEADERS.anthropic] = this.apiKey.trim();
           return fetch(path, { method: body ? "POST" : "GET", headers: headers, body: body ? JSON.stringify(body) : undefined })
             .then(function (r) { return r.json().then(function (data) { return { ok: r.ok, status: r.status, data: data }; }); });
         },
