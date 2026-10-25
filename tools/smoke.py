@@ -175,12 +175,106 @@ def starter_upgrade():
         shutil.rmtree(str(root), ignore_errors=True)
 
 
+def hint_server():
+    port = _free_port()
+    env = dict(ENV, DEV_DECIDE_HOOK_PORT=str(port))
+    subprocess.run([sys.executable, str(SCRIPTS / "hookd.py"), "--ensure"], env=env, timeout=60)
+    repo = git_repo()
+    (repo / ".claude" / "skills" / "db-migrate").mkdir(parents=True)
+    (repo / ".claude" / "skills" / "db-migrate" / "SKILL.md").write_text(
+        "---\nname: db-migrate\ndescription: Database schema changes, migrations and rollbacks\n---\n", encoding="utf-8")
+    body = json.dumps({"prompt": "rename the user_email column to email in postgres without downtime",
+                       "cwd": str(repo)}).encode()
+    try:
+        req = urllib.request.Request("http://127.0.0.1:%d/route" % port, data=body, method="POST")
+        with urllib.request.urlopen(req, timeout=30) as r:
+            out = json.loads(r.read().decode() or "{}")
+        ctx = (out.get("hookSpecificOutput") or {}).get("additionalContext", "")
+        check("hint server: answers the routing hint over HTTP", "db-migrate" in ctx, ctx[:120])
+        req = urllib.request.Request("http://127.0.0.1:%d/route" % port, data=b"{}", method="POST",
+                                     headers={"Origin": "https://example.com"})
+        try:
+            urllib.request.urlopen(req, timeout=10)
+            check("hint server: refuses browser requests", False)
+        except urllib.error.HTTPError as e:
+            check("hint server: refuses browser requests", e.code == 403)
+        check("hint server: writes nothing to the repository", not (repo / ".claude" / "dev-decide").exists())
+    finally:
+        subprocess.run([sys.executable, str(SCRIPTS / "hookd.py"), "--stop"], env=env, timeout=30)
+        shutil.rmtree(str(repo), ignore_errors=True)
+
+
+def optional_route_model():
+    sys.path.insert(0, str(SCRIPTS))
+    import fastmodel as fm
+    names = ["backend-reviewer", "db-migrate", "debugger", "devops-deploy", "docs-writer", "frontend-dev",
+             "security-auditor", "test-writer"]
+    check("optional route model: used when its agents exist", fm.optional_registry(names) is not None)
+    check("optional route model: not used for other agents", fm.optional_registry(["my-own-agent"]) is None)
+
+
+def gate_guesses():
+    sys.path.insert(0, str(SCRIPTS))
+    import finalize
+    gate = {"block": ["security_relevant.p_true >= 0.8 and risk.score >= 4", "secret_leak.p_true >= 0.7"]}
+    guess = {"security_relevant": {"p_true": 0.82, "via": "hint"}, "risk": {"score": 4.2, "via": "hint"},
+             "secret_leak": {"p_true": 0.04, "via": "rule"}}
+    found = dict(guess, secret_leak={"p_true": 0.97, "via": "rule"})
+    check("a gate never blocks on rough guesses", finalize.eval_gate(gate, guess, [])["verdict"] == "review")
+    check("a gate still blocks on a rule's finding", finalize.eval_gate(gate, found, [])["verdict"] == "block")
+
+
+def limit_messages():
+    sys.path.insert(0, str(SCRIPTS))
+    import llm
+    check("a Claude plan limit message is not taken for an answer",
+          llm._limit_message("You've hit your session limit · resets 1:30am") and
+          not llm._limit_message("issue_type choose bug=0.9 _rest=0.1"))
+
+
+def state_sync():
+    sys.path.insert(0, str(SCRIPTS))
+    import statesync
+    remote = Path(tempfile.mkdtemp(prefix="dd-smoke-remote-"))
+    subprocess.run(["git", "init", "-q", "--bare", str(remote)], check=True)
+    a = git_repo()
+    s1 = statesync.StateSync(str(a), str(remote), b"unused-for-a-local-remote")
+    s1.restore()  # as the server does when it starts; what changes afterwards gets saved
+    st = a / ".claude" / "dev-decide"
+    for d in ("models", "learn", "cache"):
+        (st / d).mkdir(parents=True, exist_ok=True)
+    (st / "models" / "x.json").write_text('{"v": 1}', encoding="utf-8")
+    (st / "learn" / "memory.jsonl").write_text(json.dumps({"preset": "p", "x": [[1, 1.0]], "text": "secret input"}) + "\n",
+                                                encoding="utf-8")
+    (st / "cache" / "c.json").write_text("{}", encoding="utf-8")
+    (st / "learn" / "recent.jsonl").write_text('{"text": "secret"}\n', encoding="utf-8")
+    saved = s1.save()
+    b = git_repo()
+    s2 = statesync.StateSync(str(b), str(remote), b"unused-for-a-local-remote")
+    s2.restore()
+    got = b / ".claude" / "dev-decide"
+    check("state sync: saves and restores learned models", saved and (got / "models" / "x.json").is_file())
+    mem = (got / "learn" / "memory.jsonl").read_text(encoding="utf-8") if (got / "learn" / "memory.jsonl").exists() else ""
+    check("state sync: corrections keep no text", '"x"' in mem and "secret" not in mem, mem[:80])
+    check("state sync: never saves the cache or recent inputs",
+          not (got / "cache" / "c.json").exists() and not (got / "learn" / "recent.jsonl").exists())
+    for d in (remote, a, b):
+        shutil.rmtree(str(d), ignore_errors=True)
+
+
+def _free_port():
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
 def server():
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         port = s.getsockname()[1]
     token = "smoke-test-token-0123456789"
-    env = dict(ENV, DEV_DECIDE_TOKEN=token, DEV_DECIDE_RATE_PER_MIN="100")
+    demo = "demo-smoke-token-0123456789"
+    env = dict(ENV, DEV_DECIDE_TOKEN=token, DEV_DECIDE_DEMO_TOKEN=demo, DEV_DECIDE_RATE_PER_MIN="100")
     repo = git_repo()
     proc = subprocess.Popen([sys.executable, str(SCRIPTS / "serve.py"), "--port", str(port), "--cwd", str(repo)],
                             env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -211,6 +305,25 @@ def server():
                          json.dumps({"state": "Login returns 500 for users with a plus sign in their email",
                                      "questions": ["issue_type"], "mode": "local"}).encode())
         check("API answers with the token", code == 200 and b'"issue_type"' in body, body.decode()[:120])
+        check("health shows the public demo token", health.get("demo_token") == demo)
+        req = urllib.request.Request(base + "/health")
+        with urllib.request.urlopen(req, timeout=30) as r:
+            hdr = r.headers
+        check("security headers on every response", hdr.get("X-Frame-Options") == "DENY" and
+              hdr.get("X-Content-Type-Options") == "nosniff" and hdr.get("Referrer-Policy") == "no-referrer")
+        code, body = get("/v1/decide", {"Authorization": "Bearer " + demo, "Content-Type": "application/json"},
+                         json.dumps({"state": "Checkout crashes for all users", "questions": ["issue_type"],
+                                     "mode": "hybrid"}).encode())
+        warns = (json.loads(body).get("meta") or {}).get("warnings") or []
+        check("demo token: answered locally, with a note", code == 200 and any("demo token" in w for w in warns),
+              str(warns)[:120])
+        code, _ = get("/v1/feedback", {"Authorization": "Bearer " + demo, "Content-Type": "application/json"},
+                      json.dumps({"id": "last", "answers": {"issue_type": "bug"}}).encode())
+        check("demo token: feedback refused", code == 403)
+        code, _ = get("/v1/decide", {"Authorization": "Bearer " + demo, "X-Anthropic-Api-Key": "not-a-key",
+                                     "Content-Type": "application/json"},
+                      json.dumps({"state": "x y z w", "questions": ["issue_type"]}).encode())
+        check("own key: a malformed key is refused", code == 400)
     finally:
         proc.terminate()
         proc.wait(timeout=10)
@@ -219,7 +332,7 @@ def server():
 
 if __name__ == "__main__":
     for step in (manifests, plugin_in_sync, first_run, hook_writes_nothing, secrets, rollback, routing, short_issues,
-                 starter_upgrade, server):
+                 starter_upgrade, optional_route_model, gate_guesses, limit_messages, state_sync, hint_server, server):
         try:
             step()
         except Exception as exc:

@@ -43,7 +43,7 @@ def evaluate(folder):
         right += best == y
         if best != y:
             wrong[(y, best)] += 1
-        if probs[best] >= threshold:
+        if probs[best] >= max(threshold, fm.class_floor(model, best)):
             answered += 1
             answered_right += best == y
     n = len(rows)

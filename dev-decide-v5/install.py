@@ -3,7 +3,9 @@
 
   python3 install.py                    install for all your projects (~/.claude)
   python3 install.py --project          install into this repository (./.claude); commit it to share
-  python3 install.py --router-hook      also add the routing-hint hook (opt-in; settings are backed up first)
+  python3 install.py --router-hook      also add the routing hint (opt-in; settings are backed up first): a small local
+                                        server answers it in milliseconds (Claude Code's HTTP hooks)
+  python3 install.py --router-hook=command   the same hint as a command run on every prompt (older Claude Code)
   python3 install.py --uninstall        remove the skill, the hook, and the old v2 engine agent
 """
 import argparse
@@ -15,7 +17,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 SRC = HERE / "skill"
-HOOK_MARK = "hook_route.py"
+HOOK_MARKS = ("hook_route.py", "hookd.py", ":47321/route")  # every form of the routing hint, old and new
+HOOK_PORT = 47321
 
 
 def python_command():
@@ -58,28 +61,56 @@ def save_settings(path, data):
 
 def strip_hook(data):
     hooks = data.get("hooks") or {}
-    groups = hooks.get("UserPromptSubmit") or []
-    kept = []
     removed = 0
-    for g in groups:
-        inner = [h for h in (g.get("hooks") or []) if HOOK_MARK not in json.dumps(h)]
-        removed += len(g.get("hooks") or []) - len(inner)
-        if inner:
-            kept.append(dict(g, hooks=inner))
-    if groups:
-        if kept:
-            hooks["UserPromptSubmit"] = kept
-        else:
-            hooks.pop("UserPromptSubmit", None)
-        if not hooks:
-            data.pop("hooks", None)
+    for event in ("UserPromptSubmit", "SessionStart"):
+        groups = hooks.get(event) or []
+        kept = []
+        for g in groups:
+            inner = [h for h in (g.get("hooks") or []) if not any(m in json.dumps(h) for m in HOOK_MARKS)]
+            removed += len(g.get("hooks") or []) - len(inner)
+            if inner:
+                kept.append(dict(g, hooks=inner))
+        if groups:
+            if kept:
+                hooks[event] = kept
+            else:
+                hooks.pop(event, None)
+    if "hooks" in data and not hooks:
+        data.pop("hooks", None)
     return removed
+
+
+def stop_hint_server(dest=None):
+    """Stop a running routing-hint server (hookd.py) before its files are replaced; the next session restarts it.
+
+    Asked over HTTP, so it works even when the server's own files are already gone."""
+    import urllib.request
+
+    def call(path, method):
+        req = urllib.request.Request("http://127.0.0.1:%d%s" % (HOOK_PORT, path), method=method,
+                                     data=b"" if method == "POST" else None)
+        with urllib.request.urlopen(req, timeout=0.5) as r:
+            return json.loads(r.read().decode("utf-8") or "{}")
+
+    try:
+        if call("/health", "GET").get("service") != "dev-decide-hook":
+            return
+        call("/shutdown", "POST")
+    except Exception:
+        return  # not running
+    for _ in range(40):  # wait until the process has exited and released its files
+        try:
+            call("/health", "GET")
+        except Exception:
+            break
+        time.sleep(0.1)
+    time.sleep(0.5)
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--project", action="store_true")
-    ap.add_argument("--router-hook", action="store_true")
+    ap.add_argument("--router-hook", nargs="?", const="http", choices=["http", "command"])
     ap.add_argument("--uninstall", action="store_true")
     args = ap.parse_args()
 
@@ -88,6 +119,7 @@ def main():
     legacy = base / "agents" / "dev-decide-engine.md"
     sfile = settings_file(base, args.project)
 
+    stop_hint_server(dest)  # it maps the meaning model's file, which Windows will not delete while mapped
     if args.uninstall:
         if dest.exists():
             shutil.rmtree(str(dest))
@@ -117,11 +149,18 @@ def main():
     if args.router_hook:
         data = load_settings(sfile)
         strip_hook(data)
-        script = (dest / "scripts" / "hook_route.py").as_posix()
-        entry = {"hooks": [{"type": "command", "command": '%s "%s"' % (py, script), "timeout": 5}]}
-        data.setdefault("hooks", {}).setdefault("UserPromptSubmit", []).append(entry)
+        hooks = data.setdefault("hooks", {})
+        scripts = dest / "scripts"
+        if args.router_hook == "command":
+            cmd = '%s "%s"' % (py, (scripts / "hook_route.py").as_posix())
+            hooks.setdefault("UserPromptSubmit", []).append({"hooks": [{"type": "command", "command": cmd, "timeout": 5}]})
+        else:  # a local server answers in milliseconds; each session start makes sure it runs
+            cmd = '%s "%s" --ensure' % (py, (scripts / "hookd.py").as_posix())
+            hooks.setdefault("SessionStart", []).append({"hooks": [{"type": "command", "command": cmd, "timeout": 10}]})
+            hooks.setdefault("UserPromptSubmit", []).append(
+                {"hooks": [{"type": "http", "url": "http://127.0.0.1:%d/route" % HOOK_PORT, "timeout": 2}]})
         save_settings(sfile, data)
-        print("added the router hook to %s" % sfile)
+        print("added the router hook (%s) to %s" % (args.router_hook, sfile))
 
     print("")
     print("Python command: %s" % py)

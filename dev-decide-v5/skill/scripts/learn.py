@@ -829,7 +829,7 @@ def _learn_one(o, lab, cfg):
         c0, conf0 = str(model["classes"][j]), p0[j]
         # shadow test: would the current model have answered this one locally, and was it right?
         if lab.get("src") != "audit" and o.meta.get("enabled") and \
-                conf0 >= float(o.meta.get("threshold", 1.01)) + adapt_for(o.adapt, c0):
+                conf0 >= max(float(o.meta.get("threshold", 1.01)), fm.class_floor(model, c0)) + adapt_for(o.adapt, c0):
             if _breaker(o.ps, "learned", c0, c0 == y):
                 _trip(o, cfg, c0)
     else:
@@ -2045,7 +2045,8 @@ class Session(object):
         if via == "memory":
             return float(self.cfg["memory_similarity"])
         meta = reg.index.get(name) or {}
-        return float(meta.get("threshold", 1.0)) + adapt_for(meta.get("adapt"), label)
+        floor = fm.class_floor(reg.load(name), label) if label is not None else 0.0
+        return max(float(meta.get("threshold", 1.0)), floor) + adapt_for(meta.get("adapt"), label)
 
     @staticmethod
     def _view(st, limit=VIEW_CHARS):

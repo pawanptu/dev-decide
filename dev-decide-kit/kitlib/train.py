@@ -209,6 +209,37 @@ def _select(cands, lat, cfg):
         len(passed), len(cands), len(tied), tol * 100)
 
 
+def class_thresholds(p, y, classes, base, target, min_n=8):
+    """Per predicted class, the confidence its answers need to reach the target on out-of-fold predictions.
+
+    A class whose answers already reach the target at the base threshold keeps it (no entry). A weaker class
+    gets the lowest higher threshold that reaches the target with at least min_n answers, or 1.01 (never
+    answered locally) when none does. Classes with fewer than min_n answers keep the base threshold.
+    """
+    pred, conf = p.argmax(axis=1), p.max(axis=1)
+    out = {}
+    for j, c in enumerate(classes):
+        m = (pred == j) & (conf >= base)
+        if m.sum() < min_n or (y[m] == j).mean() >= target:
+            continue
+        found = None
+        for t in np.unique(conf[m]):
+            mm = m & (conf >= t)
+            if mm.sum() < min_n:
+                break
+            if (y[mm] == j).mean() >= target:
+                found = round(float(t), 4)
+                break
+        out[c] = found if found is not None else 1.01
+    return out
+
+
+def _effective(conf, pred, classes, base, per_class):
+    """Confidences shifted so one base threshold applies each class's own threshold."""
+    eff = np.array([max(base, per_class.get(classes[k], 0.0)) for k in pred])
+    return conf - eff + base
+
+
 def _confusions(y, pred, classes, top=5):
     c = Counter((classes[t], classes[p]) for t, p in zip(y, pred) if t >= 0 and t != p)
     return [{"true": a, "pred": b, "count": n} for (a, b), n in c.most_common(top)]
@@ -294,9 +325,12 @@ def train_task(task, samples, cfg):
     if thr and thr[0] < cfg.min_confidence:  # never auto-answer below the confidence dev-decide would abstain at
         at = M.at_threshold(oof_conf, oof_ok, cfg.min_confidence)
         thr = (cfg.min_confidence, at["accepted_accuracy"], at["coverage"]) if at["accepted"] else None
+    per_class = class_thresholds(win["_oof"], y_dev, classes, thr[0], cfg.target) if thr else {}
     selective = None
     if thr:
-        selective = dict(M.at_threshold(t_conf, t_ok, thr[0]), threshold=thr[0], cv_coverage=thr[2],
+        t_pred = p_test.argmax(axis=1)
+        selective = dict(M.at_threshold(_effective(t_conf, t_pred, classes, thr[0], per_class), t_ok, thr[0]),
+                         threshold=thr[0], class_thresholds=per_class, cv_coverage=thr[2],
                          cv_accepted_accuracy=thr[1], target=cfg.target)
     if not thr:
         enabled, why = False, "no confidence threshold reaches %.0f%% accuracy in cross-validation" % (cfg.target * 100)
@@ -329,7 +363,7 @@ def train_task(task, samples, cfg):
     majority = Counter(s.label for s in dev).most_common(1)[0][1] / len(dev)
 
     payload = {"classes": classes, "kind": kind, "bias": bias, "temperature": win["temperature"],
-               "threshold": thr[0] if thr else 1.01, "featurizer": fz, "format": "bin1",
+               "threshold": thr[0] if thr else 1.01, "class_thresholds": per_class, "featurizer": fz, "format": "bin1",
                "buckets": buckets, "rows": rows,
                "parity": [{"vec": {str(k): v for k, v in s.vec[fz].items()}, "probs": [float(x) for x in p]}
                           for s, p in list(zip(test, p_test))[:20]]}
@@ -391,6 +425,8 @@ def train_families(paths, families, cfg):
 def save_model(paths, task, p):
     fm = devdecide()["fm"]
     meta = {k: p[k] for k in ("classes", "kind", "bias", "temperature", "threshold", "featurizer", "format")}
+    if p.get("class_thresholds"):
+        meta["class_thresholds"] = p["class_thresholds"]
     write_json(paths.models / ("%s.json" % task), meta, indent=None)
     fm.write_binary(str(paths.models / ("%s.bin" % task)), p["buckets"].tolist(),
                     p["rows"].astype(np.float32).ravel().tolist(), len(p["classes"]))

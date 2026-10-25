@@ -33,7 +33,19 @@ class LLMError(Exception):
     pass
 
 
+LIMIT_MARKERS = ("hit your session limit", "hit your usage limit", "usage limit reached", "rate limit reached",
+                 "credit balance is too low")
+
+
+def _limit_message(text):
+    """Claude Code returns plan and usage limits as ordinary reply text; they must never pass for an answer."""
+    low = (text or "")[:300].lower()
+    return len(low) < 300 and any(m in low for m in LIMIT_MARKERS)
+
+
 def backend_choice(policy):
+    if (policy or {}).get("_api_key"):  # the caller's own key (bring-your-own-key): this request uses the API
+        return "api"
     forced = (os.environ.get("DEV_DECIDE_BACKEND") or str(policy.get("backend") or "auto")).lower()
     has_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
     has_cli = bool(shutil.which("claude"))
@@ -179,8 +191,8 @@ def _call_cli(system, user, model, root, deep, timeout, effort=None):
         text = data.get("result") or ""
         info = {"cost_usd": data.get("total_cost_usd"), "api_ms": data.get("duration_api_ms"),
                 "turns": data.get("num_turns")}
-        if data.get("is_error") and not text:
-            raise LLMError(str(data.get("subtype") or "model call failed"))
+        if data.get("is_error") or _limit_message(text):  # e.g. "You've hit your session limit": not an answer
+            raise LLMError((text or str(data.get("subtype") or "model call failed"))[:300])
     except ValueError:
         text = out
     if proc.returncode != 0 and not text:
@@ -188,10 +200,10 @@ def _call_cli(system, user, model, root, deep, timeout, effort=None):
     return text, info
 
 
-def _call_api(system, user, model, timeout):
+def _call_api(system, user, model, timeout, key=None):
     import urllib.error
     import urllib.request
-    key = os.environ.get("ANTHROPIC_API_KEY", "")
+    key = key or os.environ.get("ANTHROPIC_API_KEY", "")
     url = os.environ.get("DEV_DECIDE_API_URL") or "https://api.anthropic.com/v1/messages"
     body = {"model": model, "max_tokens": 2048, "temperature": 0,
             "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
@@ -280,7 +292,7 @@ def call_model(system, user, policy, root, deep=False, timeout=None):
     forced = policy.get("_force_model") or {}  # escalation to a stronger model (engine._escalate)
     if backend == "api":
         model = forced.get("api") or dd.model_for(policy, "api")
-        text, info = _call_api(system, user, model, timeout or 60)
+        text, info = _call_api(system, user, model, timeout or 60, key=policy.get("_api_key"))
     elif backend == "cli":
         model = forced.get("cli") or dd.model_for(policy, "cli")
         effort = os.environ.get("DEV_DECIDE_EFFORT", policy.get("effort", "low"))

@@ -1,12 +1,23 @@
 {
   "hooks": {
-    "UserPromptSubmit": [
+    "SessionStart": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/skills/dev-decide/scripts/run.sh\" hook_route.py",
-            "timeout": 5
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/skills/dev-decide/scripts/run.sh\" hookd.py --ensure",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://127.0.0.1:47321/route",
+            "timeout": 2
           }
         ]
       }

@@ -1,6 +1,6 @@
 # dev-decide: run it locally and deploy it live
 
-This guide is for **dev-decide 5.0.1**, from `dev-decide-v5.0.1-kit.zip`. Part 1 sets it up on your own computer:
+This guide is for **dev-decide 5.1** (the GitHub repository; the steps also work from the 5.0.1 zip). Part 1 sets it up on your own computer:
 the Claude Code skill, the command line and the local HTTP API. Part 2 puts the HTTP API on the internet, on a
 free platform.
 
@@ -57,7 +57,7 @@ cd ~/dev-decide-v5-kit
 ls
 # README.md  dev-decide-kit  dev-decide-v5  setup_deploy.md
 grep '^VERSION' dev-decide-v5/skill/scripts/ddcore.py
-# VERSION = "5.0.1"
+# VERSION = "5.1.0"
 ```
 
 If you unzipped 5.0 to `~/dev-decide-v5-kit` before, delete that folder first (`rm -rf ~/dev-decide-v5-kit`).
@@ -205,14 +205,14 @@ in a terminal:
 
 ```bash
 python3 ~/.claude/skills/dev-decide/scripts/serve.py --port 8765 --cwd /path/to/your/repo
-# dev-decide 5.0.1 listening on http://127.0.0.1:8765 (repo: /path/to/your/repo; no authentication; file references on)
+# dev-decide 5.1.0 listening on http://127.0.0.1:8765 (repo: /path/to/your/repo; no authentication; file references on)
 ```
 
 Open http://127.0.0.1:8765/ in a browser for a web page with a live console, or use curl from a second terminal:
 
 ```bash
 curl -s localhost:8765/health
-# {"ok": true, "version": "5.0.1"}
+# {"ok": true, "version": "5.1.0", ...}
 
 curl -s localhost:8765/v1/decide -H 'Content-Type: application/json' \
   -d '{"state": "Login returns 500 for users with a plus sign in their email", "questions": ["triage"]}'
@@ -231,7 +231,7 @@ token locally too, start it with `DEV_DECIDE_TOKEN` set and send `-H "Authorizat
 
 | Endpoint | What it does |
 |---|---|
-| `GET /health` | Returns `{"ok": true, "version": "5.0.1"}`. Never needs a token. |
+| `GET /health` | Returns `{"ok": true, "version": "5.1.0", ...}` with Claude availability, model-call use and the demo token if set. Never needs a token. |
 | `POST /v1/decide` | `{"state": "...", "questions": [...]}`. Optional: `"diff"`, `"items"` (a batch), `"mode": "local"` or `"llm"`, `"why": true`. |
 | `POST /v1/feedback` | `{"id": "<decision id>", "answers": {"key": "correct value"}}`, plus `"item"` for a batch item. |
 | `GET /v1/learning` | The state of the learning loop. |
@@ -321,11 +321,37 @@ engine (`dev-decide-v5/skill`), and `dev-decide-server/repo/` holds the server's
 | Root Directory | leave **empty** (the Dockerfile is at the repository root) |
 | Instance type | **Free** |
 | Health Check Path | `/health` |
-| Environment | `DEV_DECIDE_TOKEN` (required, 32 random characters), `ANTHROPIC_API_KEY` (optional), `DEV_DECIDE_LEARNING=0` |
+| Environment | `DEV_DECIDE_TOKEN` (required, 32 random characters), `ANTHROPIC_API_KEY` (optional), and the optional ones below |
+| Auto-Deploy (Settings) | **After CI Checks Pass**, so a push deploys only when the GitHub Actions tests are green |
 
-When it is live, open the service URL in a browser: `/` is a web page with a live console (paste the token there),
-and `/health` reports the version, whether Claude is available (`"model": "api"` or `"none"`) and whether today's
-model-call cap has room left. Every other endpoint still needs the token.
+When it is live, open the service URL in a browser: `/` is a web page with a live console, and `/health` reports
+the version, whether Claude is available (`"model": "api"` or `"none"`), today's model-call use and, if you set
+one, the public demo token. Every other endpoint needs a token.
+
+Optional environment variables:
+
+| Variable | What it does |
+|---|---|
+| `DEV_DECIDE_DEMO_TOKEN` | A second, public token for a demo (16+ characters, different from `DEV_DECIDE_TOKEN`). The web page fills it in for visitors. It gets local answers only, unless the visitor adds their own Anthropic key; nothing about demo requests is stored or learned from, and feedback is refused. |
+| `DEV_DECIDE_LOCAL_ONLY=1` | Never use the server's own Anthropic key: every request is answered locally (visitors' own keys still work). |
+| `DEV_DECIDE_STATE_REPO`, `DEV_DECIDE_STATE_KEY_B64` | Keep what the server learns across restarts, in a private git repository (see below). |
+| `DEV_DECIDE_LEARNING=0` | Turn learning off. Leave it unset to learn from your own requests and feedback. |
+
+**Visitors' own keys.** A request may carry `X-Anthropic-Api-Key: sk-ant-...` (the web page has a field for it).
+That key pays for that request's model calls only: it is never stored, logged or cached, and those calls do not
+count against the server's daily cap.
+
+**Keeping what it learns.** Free hosting wipes the disk on every restart, sleep and deploy. To keep the learning:
+create a private repository (for example `you/dev-decide-state`), make an SSH key pair
+(`ssh-keygen -t ed25519 -N "" -f dd_state_key`), add the public key to that repository as a deploy key with write
+access (Settings → Deploy keys), and set `DEV_DECIDE_STATE_REPO=git@github.com:you/dev-decide-state.git` and
+`DEV_DECIDE_STATE_KEY_B64` to the private key encoded on one line (`base64 -w0 dd_state_key`). The server restores
+the saved state when it starts, saves every 10 minutes when something changed, and once more when it stops. It
+saves models and hashed labels, never input text. The repository keeps a single commit.
+
+**GitHub Actions.** `.github/workflows/dev-decide-triage.yml` labels each new issue and leaves one comment;
+`.github/workflows/dev-decide-pr.yml` rates each pull request, keeps one comment up to date and fails the check
+when the gate says block. Add two repository secrets: `DD_URL` (the service URL) and `DD_TOKEN` (your token).
 
 The server limits itself so a leaked token cannot run up a bill. Change the limits with environment variables:
 
@@ -487,7 +513,7 @@ personal use and small businesses; Podman is an open-source alternative that tak
 ```bash
 docker build -t dev-decide .
 docker run --rm -p 127.0.0.1:8765:8765 -e DEV_DECIDE_TOKEN='<your token>' dev-decide
-# dev-decide 5.0.1 listening on http://0.0.0.0:8765 (repo: /app/repo; token required; file references off)
+# dev-decide 5.1.0 listening on http://0.0.0.0:8765 (repo: /app/repo; token required; file references off)
 ```
 
 In a second terminal:
@@ -651,7 +677,7 @@ From your computer:
 
 ```bash
 export DD_URL=https://<your hostname> DD_TOKEN='<your token>'
-curl -s $DD_URL/health                                 # {"ok": true, "version": "5.0.1"}
+curl -s $DD_URL/health                                 # {"ok": true, "version": "5.1.0", ...}
 ```
 
 Both containers start again by themselves after a crash or a reboot.

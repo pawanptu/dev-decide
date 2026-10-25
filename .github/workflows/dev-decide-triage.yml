@@ -1,0 +1,74 @@
+name: dev-decide triage
+
+# Labels new issues with dev-decide's typed answers (issue type and severity) and leaves one summary comment.
+# Needs two repository secrets: DD_URL (your server, e.g. https://dev-decide.onrender.com) and DD_TOKEN.
+# Issue text is untrusted: it only ever travels through environment variables and jq, never into the script.
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Ask dev-decide and label the issue
+        env:
+          DD_URL: ${{ secrets.DD_URL }}
+          DD_TOKEN: ${{ secrets.DD_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number }}
+          TITLE: ${{ github.event.issue.title }}
+          BODY: ${{ github.event.issue.body }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DD_URL:-}" ] || [ -z "${DD_TOKEN:-}" ]; then
+            echo "DD_URL and DD_TOKEN secrets are not set; skipping."; exit 0
+          fi
+          jq -n --arg t "$TITLE" --arg b "${BODY:-}" \
+            '{questions: ["issue_type", "severity"], state: ($t + "\n\n" + $b), mode: "hybrid"}' > req.json
+          # A sleeping free server needs about a minute to wake: retry for up to ~3 minutes.
+          curl -sS --fail-with-body --retry 6 --retry-delay 20 --retry-all-errors -m 150 \
+            -H "Authorization: Bearer $DD_TOKEN" -H "Content-Type: application/json" \
+            --data @req.json "${DD_URL%/}/v1/decide" > out.json
+          jq -r '.summary' out.json
+
+          # Only confident answers become labels.
+          type=$(jq -r '.answers.issue_type | select(.abstain == false and .via != "hint") | .choice // empty' out.json)
+          sev=$(jq -r '.answers.severity | select(.abstain == false and .via != "hint") | .choice // empty' out.json)
+          labels=()
+          case "$type" in
+            bug) labels+=("bug") ;;
+            feature_request) labels+=("enhancement") ;;
+            question) labels+=("question") ;;
+            docs) labels+=("documentation") ;;
+            support) labels+=("support") ;;
+            duplicate_or_noise) labels+=("duplicate") ;;
+          esac
+          case "$sev" in
+            sev1_outage) labels+=("severity: outage") ;;
+            sev2_major) labels+=("severity: major") ;;
+          esac
+          for l in "${labels[@]}"; do
+            gh label create "$l" --repo "$REPO" --color ededed >/dev/null 2>&1 || true
+            gh issue edit "$NUMBER" --repo "$REPO" --add-label "$l"
+          done
+
+          {
+            echo "<!-- dev-decide -->"
+            echo "**dev-decide triage**"
+            echo
+            echo "| Question | Answer | Confidence | Source |"
+            echo "|---|---|---|---|"
+            jq -r '.answers | to_entries[] | select(.value.error == null) |
+              "| \(.key) | \(.value.choice // .value.score // .value.verdict) | \((.value.confidence * 100 | floor))%\(if .value.abstain then " (unsure)" else "" end) | \(.value.via) |"' out.json
+            echo
+            if [ ${#labels[@]} -gt 0 ]; then echo "Labels added: ${labels[*]}."; else echo "No label added: no answer was confident enough."; fi
+          } > comment.md
+          gh issue comment "$NUMBER" --repo "$REPO" --body-file comment.md

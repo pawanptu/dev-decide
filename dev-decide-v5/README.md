@@ -1,8 +1,10 @@
-# dev-decide 5.0.1
+# dev-decide 5.1.0
 
 A Jev-style decision engine for software and AI work, packaged as a Claude Code skill plus a
 command-line tool, an opt-in routing hook and a small HTTP API. It decides locally in milliseconds
 when it can, asks Claude when it can't, and learns from every answer.
+
+**New in 5.1:** a routing hint in about 5 ms, routing by meaning, example agents with their route model, a demo token and bring-your-own-key for the web page, learning that survives restarts, GitHub Actions and retrained models. See `../CHANGELOG.md`.
 
 **New in 5.0.1: the HTTP API can be deployed.** `serve.py` checks a token (`DEV_DECIDE_TOKEN`), refuses to
 listen beyond localhost without one, stops reading the server's files (`DIFF`, `COMMIT`, `@path`) when it
@@ -253,9 +255,17 @@ curl -s localhost:8765/v1/learning      # what has been learned, spot-check resu
   `{"questions": ["pr"], "diff": "<output of git diff>"}`, or `"diff"` per item in a batch.
   `--allow-file-refs` turns file references back on when every caller may read the server's files.
 - `setup_deploy.md` has a Dockerfile and step-by-step deployment to free hosting.
+- A second, public `DEV_DECIDE_DEMO_TOKEN` gives local answers only (nothing about those requests is stored or
+  learned); `X-Anthropic-Api-Key: sk-ant-...` lets a caller pay for their own request's model calls (never stored,
+  logged or counted against the cap); `DEV_DECIDE_LOCAL_ONLY=1` never uses the server's key. Requests are rate
+  limited per client (`DEV_DECIDE_RATE_PER_MIN`, default 30) and model calls per day (`DEV_DECIDE_MODEL_CALLS_PER_DAY`,
+  default 300, with a warning from 80%). `GET /v1/presets` lists the questions and their answers (for feedback forms).
+- `statesync.py` keeps what a server learns across restarts in a private git repository (`DEV_DECIDE_STATE_REPO`).
 
-**Router hook (opt-in).** Install with `--router-hook`. On every prompt it scores your agents and skills
-locally in about 70 ms. Only when the match is clear, it adds one line of context, for example "this request most
+**Router hook (opt-in).** Install with `--router-hook`. On every prompt a small local server (`hookd.py`,
+started by a session-start hook and reached through Claude Code's HTTP hook) scores your agents and skills in
+about 5 ms; `--router-hook=command` runs it as a command per prompt instead (about 70 ms on Linux, 300 ms on
+Windows). Only when the match is clear, it adds one line of context, for example "this request most
 closely matches the skill `db-migrate` ... confidence 0.86". It never blocks a prompt or calls a model,
 and it stores nothing. Tune or disable it under `router_hook` in the policy file.
 

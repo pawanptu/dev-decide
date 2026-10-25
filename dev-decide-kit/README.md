@@ -22,9 +22,9 @@ by Sonnet, in 89 model calls for $1.22. Retraining with meaning features needed 
 | Decision | Features chosen | Answered locally (test) | Overall test accuracy (was) | Status |
 |---|---|---|---|---|
 | `route` | words + meaning (f4) | 91% at 94% accuracy | 90.6% (84.9%) | **enabled** |
-| `issue_type` | words + meaning (f3), retrained 25 October | 89% at 97% accuracy | 89.2% on a test split that now includes short reports | **enabled** |
-| `severity` | words (f1) | 69% at 83% accuracy | 78.6% (78.6%), 95% within one level | not yet |
-| `domain` | words + meaning (f3) | 47% at 89% accuracy | 68.4% (57.9%) across 32 classes | not yet |
+| `issue_type` | words + spelling (f2), retrained 25 October | 93% at 96% accuracy | 95.3% | **enabled** |
+| `severity` | words (f1), retrained 25 October | 45% at 98% accuracy | 73.2% | **enabled** |
+| `domain` | words + meaning (f4), retrained 25 October | 70% at 92% accuracy | 80.2% across 32 classes | **enabled** |
 | `breaking_change` | words (f1) | 37%, only 7 answers | 63.2% (63.2%) | not yet |
 | `risk` | words + spelling (f2) | 9%, 2 answers | 68.2% (63.6%), 82% within one level | not yet |
 
@@ -43,10 +43,28 @@ win. On 60 short reports it never trained on (`data/triage/short_test.jsonl`, `t
 | Answered locally / right when answered | 96.7% / 34.5% | 91.7% / 94.5% |
 | Long reports held out by both runs (40) | 95.0% | 95.0% |
 
-The model alone now takes about 0.8 ms instead of 0.14 ms, because it reads meaning features. The run's report is
-`reports/train-2026-10-25-short-issues.json`; `severity` and `domain` were not changed. Repositories that still hold
-the first starter model get the new one on their next decision; models you trained or the learning loop promoted
-are never replaced.
+Repositories that still hold an earlier starter model get the new one on their next decision; models you trained
+or the learning loop promoted are never replaced.
+
+**Second retrain (25 October 2026, dev-decide 5.1): 772 more issues and per-class thresholds.** Haiku wrote 800 new
+issues and Sonnet labeled them blind (agreeing with the writer on 537 of 625 issue types; disagreements are not
+trained on), in 155 calls. The 150 hand-labeled short reports were checked blind by Sonnet too: it agreed on 205 of
+206 and the one it disputed was removed. Training now also measures, for each answer class, the confidence its
+answers need to reach 90% on out-of-fold predictions, so weak classes need more before they are answered locally
+(for example `severity` never answers sev2_major or sev3_minor locally). All three triage models are now enabled.
+On examples that neither the earlier run nor this one trained on:
+
+| | Accuracy (was) | Answered locally (was) | Right when answered (was) |
+|---|---|---|---|
+| `issue_type`, 39 long reports | 97.4% (94.9%) | 94.9% (97.4%) | 97.3% (97.4%) |
+| `issue_type`, 60 short reports | 88.3% (88.3%) | 83.3% (91.7%) | 96.0% (94.5%) |
+| `domain`, 28 long reports | 82.1% (67.9%) | 67.9% (46.4%, but not enabled) | 100% (84.6%) |
+| `severity`, 38 long reports | 76.3% (84.2%) | 47.4% (71.1%, but not enabled) | 94.4% (85.2%) |
+
+`severity` is right less often overall on these 38, but answers only where it is reliable; before, it was not
+enabled at all. The run's report is `reports/train-2026-10-25-triage-5.1.json`. The 500 new diffs for `risk` and
+`breaking_change` were not written: the writer hit the Claude plan's session limit (the kit now treats such replies
+as failures and never caches them), so those two models are unchanged.
 
 **Speed.** Measured on a 2-core cloud VM with no model call, against Jev's reported 70–500 ms:
 

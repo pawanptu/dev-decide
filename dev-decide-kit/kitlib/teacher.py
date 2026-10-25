@@ -27,6 +27,16 @@ CHILD_ENV_DROP = ("CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN",
 CACHE_VERSION = "t1"
 
 
+LIMIT_MARKERS = ("hit your session limit", "hit your usage limit", "usage limit reached", "rate limit reached",
+                 "credit balance is too low")
+
+
+def _limit_message(text):
+    """Claude Code returns plan and usage limits as ordinary reply text; they must never pass for an answer."""
+    low = (text or "")[:300].lower()
+    return len(low) < 300 and any(m in low for m in LIMIT_MARKERS)
+
+
 class BudgetExceeded(KitError):
     pass
 
@@ -163,6 +173,8 @@ class Teacher(object):
 
     def _call_cli(self, system, user):
         exe = shutil.which("claude")
+        if exe is None:
+            raise RuntimeError("the claude command was not found")
         fd, sysfile = tempfile.mkstemp(prefix="ddkit-system-", suffix=".md")
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
@@ -189,8 +201,8 @@ class Teacher(object):
                 raise RuntimeError((proc.stderr or out)[:300] or "claude exited %d" % proc.returncode)
             return out, {"backend": "cli:%s" % self.model}
         text = data.get("result") or ""
-        if data.get("is_error") and not text:
-            raise RuntimeError(str(data.get("subtype") or "model call failed"))
+        if data.get("is_error") or _limit_message(text):  # e.g. "You've hit your session limit": not an answer
+            raise RuntimeError((text or str(data.get("subtype") or "model call failed"))[:300])
         usage = data.get("usage") or {}
         return text, {"backend": "cli:%s" % self.model, "cost_usd": data.get("total_cost_usd"),
                       "output_tokens": usage.get("output_tokens")}

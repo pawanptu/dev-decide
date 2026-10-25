@@ -28,16 +28,11 @@ class _Hint(object):
         self.probs = probs
 
 
-def main():
-    if os.environ.get("DEV_DECIDE_CHILD"):
-        return
-    try:
-        data = json.loads(sys.stdin.read() or "{}")
-    except ValueError:
-        return
+def hint(data):
+    """The hook's JSON output for one prompt (a dict), or None to stay silent. Shared with hookd.py."""
     prompt = (data.get("prompt") or "").strip()
     if not prompt or prompt.startswith("/") or len(prompt.split()) < 4 or len(prompt) > 4000:
-        return
+        return None
     import ddcore as dd
     import router
 
@@ -45,10 +40,10 @@ def main():
     policy = dd.load_policy(root)
     cfg = policy.get("router_hook") or {}
     if cfg.get("enabled") is False:
-        return
+        return None
     routes = dd.discover_routes(root, policy, include_builtins=bool(cfg.get("builtins", False)))
     if not routes:
-        return
+        return None
     min_conf = float(cfg.get("min_confidence", 0.6))
     min_margin = float(cfg.get("min_margin", 0.2))
 
@@ -56,6 +51,8 @@ def main():
     try:  # a trained route model wins when it is enabled and confident
         import fastmodel
         reg = fastmodel.Registry(root)
+        if not reg.enabled("route"):  # no route model here yet: the shipped one, if it knows these agents (read only)
+            reg = fastmodel.optional_registry([r["name"] for r in routes]) or reg
         if reg.enabled("route"):
             import inputs  # imported only when needed: the analyzers compile many patterns
             import signals
@@ -77,15 +74,27 @@ def main():
     if best is None:
         best = router.best_route(prompt, routes, min_confidence=min_conf, min_margin=min_margin)
     if not best:
-        return
+        return None
     name, conf = best
     route = next((r for r in routes if r["name"] == name), None)
     if route is None:
-        return
+        return None
     desc = (" (%s)" % route["description"][:120]) if route.get("description") else ""
     context = ("dev-decide routing hint: this request most closely matches the %s `%s`%s; match confidence %.2f."
                % (route["kind"], name, desc, conf))
-    print(json.dumps({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": context}}))
+    return {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": context}}
+
+
+def main():
+    if os.environ.get("DEV_DECIDE_CHILD"):
+        return
+    try:
+        data = json.loads(sys.stdin.read() or "{}")
+    except ValueError:
+        return
+    out = hint(data)
+    if out:
+        print(json.dumps(out))
 
 
 if __name__ == "__main__":

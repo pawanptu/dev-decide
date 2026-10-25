@@ -415,12 +415,23 @@ def eval_expr(expr, answers):
     return False
 
 
+GATE_KEY = re.compile(r"([A-Za-z0-9_\-]+)\.(?:score|level|p_true|confidence|margin|choice)")
+
+
+def _rests_on_guess(expr, answers):
+    """True when a rule reads an answer that is only a local heuristic (via "hint"), not a fact or a model."""
+    return any((answers.get(k) or {}).get("via") == "hint" for k in GATE_KEY.findall(expr))
+
+
 def eval_gate(gate, answers, warnings):
     fired_block, fired_review = [], []
     for expr in gate.get("block") or []:
         try:
             if eval_expr(expr, answers):
-                fired_block.append(expr)
+                if _rests_on_guess(expr, answers):  # a gate never blocks on a rough guess: a human looks instead
+                    fired_review.append(expr + " (rough guess, so review rather than block)")
+                else:
+                    fired_block.append(expr)
         except ValueError as exc:
             warnings.append("gate: %s" % exc)
     for expr in gate.get("review") or []:

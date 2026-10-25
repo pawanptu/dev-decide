@@ -158,6 +158,35 @@
   .skeleton div { height:62px; border-radius:12px; background:linear-gradient(90deg,var(--bg2),var(--panel2),var(--bg2)); background-size:200% 100%; animation:sh 1.2s infinite; }
   @keyframes sh { to { background-position:-200% 0; } }
 
+  /* console additions: pitch, banner, access, feedback, batch, history */
+  .pitch { font-weight:500; color:var(--muted); font-size:13px; margin-left:6px; }
+  @media (max-width:700px) { .pitch { display:none; } }
+  .banner { margin:0 0 16px; padding:10px 14px; border-radius:10px; font-size:14px;
+            border:1px solid color-mix(in srgb,var(--review) 45%,transparent); background:color-mix(in srgb,var(--review) 10%,transparent); color:var(--review); }
+  .opt { font-weight:400; color:var(--dim); }
+  .seg.two { grid-template-columns:1fr 1fr; margin-bottom:18px; }
+  .exrow { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; align-items:center; }
+  .exrow .ex { border:1px solid var(--line2); border-radius:999px; padding:3px 10px; }
+  .warns { margin:0 0 12px; padding:0; list-style:none; display:grid; gap:6px; }
+  .warns li { font-size:12.5px; color:var(--review); }
+  .fb { display:flex; gap:6px; margin-top:9px; flex-wrap:wrap; align-items:center; }
+  .fb button { font:inherit; font-size:12px; padding:4px 10px; border-radius:7px; border:1px solid var(--line2); background:var(--panel); color:var(--muted); cursor:pointer; }
+  .fb button:hover { color:var(--fg); }
+  .fb select { width:auto; padding:4px 8px; font-size:12px; border-radius:7px; }
+  .fb .done { font-size:12px; color:var(--pass); }
+  .btable { width:100%; border-collapse:collapse; font-size:13px; }
+  .btable th, .btable td { text-align:left; padding:8px 6px; border-bottom:1px solid var(--line); vertical-align:top; }
+  .btable th { color:var(--muted); font-weight:600; font-size:12px; }
+  .btable td.in { color:var(--muted); max-width:240px; overflow-wrap:anywhere; }
+  .vp { font-weight:700; } .vp.pass { color:var(--pass); } .vp.review { color:var(--review); } .vp.block { color:var(--block); }
+  .history { margin-top:18px; border:1px solid var(--line); border-radius:var(--radius); padding:14px 18px; background:var(--panel); }
+  .history h3 { margin:0; font-size:15px; }
+  .hitem { display:flex; justify-content:space-between; gap:12px; padding:8px 0; border:0; border-bottom:1px solid var(--line); cursor:pointer;
+           font-size:13px; background:none; width:100%; color:var(--fg); font-family:inherit; text-align:left; }
+  .hitem .s { color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+  .hitem .w { color:var(--dim); white-space:nowrap; }
+  .seg button[disabled] { opacity:.4; cursor:not-allowed; }
+
   /* tiers */
   .tiers { display:grid; grid-template-columns:repeat(5,1fr); gap:14px; counter-reset:t; }
   @media (max-width:960px) { .tiers { grid-template-columns:1fr 1fr; } }
@@ -231,7 +260,7 @@
   <div class="glow"></div><div class="grid-bg"></div>
   <div class="wrap hero-grid">
     <div>
-      <span class="eyebrow"><b></b> v5.0.1 · Claude Code plugin · MIT</span>
+      <span class="eyebrow"><b></b> v5.1 · Claude Code plugin · MIT</span>
       <h1>Decisions,<br><span class="gt">not prose.</span></h1>
       <p class="lead">Dev Decide gives your agents typed, calibrated answers to route work, triage issues and gate pull requests. Local in milliseconds when it can. Claude when it matters. Better with every answer.</p>
       <div class="cta">
@@ -270,22 +299,35 @@
   <div class="wrap">
     <div class="kicker">Live console</div>
     <h2>Ask it something.</h2>
-    <p class="sub">Paste an issue, a request or a diff. "Local" answers instantly from rules and trained models; "Hybrid" asks Claude only for what stays unsure.</p>
+    <p class="sub">Paste an issue, a request, an error or a diff and get typed answers, each with a confidence and its source. "Local" is instant and free; "Hybrid" asks Claude only for what stays unsure.</p>
+    <div class="banner" id="banner" hidden></div>
 
     <div class="console">
       <div class="console-head">
         <div class="t">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 17l6-5-6-5M12 19h8"/></svg>
-          decide
+          decide <span class="pitch">Decisions, not prose: route, triage and gate work in milliseconds.</span>
         </div>
         <div class="status"><span class="dot" id="dot"></span><span id="health">checking server…</span></div>
       </div>
       <div class="console-body">
         <div class="pane">
           <div class="field">
-            <label class="lbl" for="token">Access token</label>
-            <input id="token" type="password" autocomplete="off" placeholder="Paste your DEV_DECIDE_TOKEN">
-            <div class="hint">Stays in this browser tab only. Sent to this server, nowhere else.</div>
+            <div class="row-between">
+              <span class="lbl" style="margin:0">Access</span>
+              <button class="ex" id="tok-toggle" type="button" hidden>use my own token</button>
+            </div>
+            <div class="hint" id="tok-note" hidden></div>
+            <input id="token" type="password" autocomplete="off" placeholder="Paste your DEV_DECIDE_TOKEN" style="margin-top:8px">
+          </div>
+          <div class="field">
+            <label class="lbl" for="apikey">Your Anthropic API key <span class="opt">(optional)</span></label>
+            <input id="apikey" type="password" autocomplete="off" placeholder="sk-ant-… to let Claude answer what stays unsure">
+            <div class="hint">Sent in a header with each request and used for that request only. Never stored by this page or the server.</div>
+          </div>
+          <div class="seg two" id="shape" role="group" aria-label="One input or many">
+            <button data-v="single" aria-pressed="true">One input</button>
+            <button data-v="batch" aria-pressed="false">Batch (one per line)</button>
           </div>
           <div class="field">
             <span class="lbl" id="q-l">What to decide</span>
@@ -308,20 +350,18 @@
             </div>
             <div class="hint" id="mode-hint">Instant and free. Questions without a trusted local answer show as "not decided".</div>
           </div>
-          <div class="field">
-            <div class="row-between">
-              <label class="lbl" for="state" style="margin:0">Input</label>
-              <div class="examples">
-                <button class="ex" data-ex="bug">bug report</button>
-                <button class="ex" data-ex="inc">error log</button>
-                <button class="ex" data-ex="diff">sample diff</button>
-              </div>
-            </div>
+          <div class="field" id="single-f">
+            <label class="lbl" for="state">Input</label>
             <textarea id="state" placeholder="Paste an issue, a request, an error log…"></textarea>
+            <div class="exrow" id="examples" aria-label="Examples"></div>
           </div>
           <div class="field" id="diff-f" hidden>
             <label class="lbl" for="diff">Unified diff</label>
             <textarea id="diff" placeholder="diff --git a/… b/…"></textarea>
+          </div>
+          <div class="field" id="batch-f" hidden>
+            <label class="lbl" for="batch">Inputs, one per line <span class="opt">(up to 50)</span></label>
+            <textarea id="batch" style="min-height:180px" placeholder="Login returns 500 for some users&#10;Please add dark mode&#10;How do I reset my API key?"></textarea>
           </div>
           <button class="btn primary go" id="go">Decide <span aria-hidden="true">→</span></button>
           <div class="hint" style="text-align:center;margin-top:8px">Ctrl + Enter</div>
@@ -333,6 +373,12 @@
           </div>
         </div>
       </div>
+    </div>
+
+    <div class="history" id="history-wrap" hidden>
+      <div class="row-between"><h3>History</h3><button class="ex" id="hist-clear" type="button">clear</button></div>
+      <div id="history"></div>
+      <div class="hint">Kept in this browser only, never sent anywhere.</div>
     </div>
   </div>
 </section>
@@ -410,7 +456,7 @@
 
 <footer>
   <div class="wrap">
-    <div>Dev Decide 5.0.1 · MIT</div>
+    <div>Dev Decide 5.1 · MIT</div>
     <div><a href="https://github.com/pawanptu/dev-decide" target="_blank" rel="noopener">GitHub</a> · <a href="/health">Status</a></div>
   </div>
 </footer>
@@ -419,20 +465,31 @@
 <script>
 (function () {
   var $ = function (id) { return document.getElementById(id); };
-  var store = { get: function (k) { try { return sessionStorage.getItem(k) || ""; } catch (e) { return ""; } },
-                set: function (k, v) { try { sessionStorage.setItem(k, v); } catch (e) {} } };
+  var session = { get: function (k) { try { return sessionStorage.getItem(k) || ""; } catch (e) { return ""; } },
+                  set: function (k, v) { try { sessionStorage.setItem(k, v); } catch (e) {} } };
+  var local = { get: function (k) { try { return JSON.parse(localStorage.getItem(k) || "null"); } catch (e) { return null; } },
+                set: function (k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} } };
   var LOCAL = { rule: 1, learned: 1, memory: 1, episodic: 1, cache: 1 };
   var EXAMPLES = {
-    bug: "Login returns 500 for users with a plus sign in their email address. Started after yesterday's deploy. About 3% of sign-ins fail.",
-    inc: "Traceback (most recent call last):\n  File \"worker.py\", line 88, in run\n    batch = model(inputs.cuda())\ntorch.cuda.OutOfMemoryError: CUDA out of memory. Tried to allocate 2.00 GiB",
-    diff: "diff --git a/src/auth/session.py b/src/auth/session.py\n--- a/src/auth/session.py\n+++ b/src/auth/session.py\n@@ -10,7 +10,7 @@ def make_session(user):\n-    ttl = 3600\n+    ttl = 86400 * 30\n     token = secrets.token_urlsafe(32)\n     return Session(user=user, token=token, ttl=ttl)\n"
+    triage: { label: "bug report", state: "Login returns 500 for users with a plus sign in their email address. Started after yesterday's deploy. About 3% of sign-ins fail." },
+    pr: { label: "pull request", state: "Extend session lifetime to 30 days",
+          diff: "diff --git a/src/auth/session.py b/src/auth/session.py\n--- a/src/auth/session.py\n+++ b/src/auth/session.py\n@@ -10,7 +10,7 @@ def make_session(user):\n-    ttl = 3600\n+    ttl = 86400 * 30\n     token = secrets.token_urlsafe(32)\n     return Session(user=user, token=token, ttl=ttl)\n" },
+    incident: { label: "error log", state: "Traceback (most recent call last):\n  File \"worker.py\", line 88, in run\n    batch = model(inputs.cuda())\ntorch.cuda.OutOfMemoryError: CUDA out of memory. Tried to allocate 2.00 GiB" },
+    plan: { label: "task", state: "Add rate limiting to the public login endpoint: 5 attempts per minute per IP, with a clear error message." },
+    route: { label: "request", state: "Rename the user_email column to email in Postgres without downtime." },
+    deploy: { label: "deploy", state: "Drop the legacy orders_v1 table",
+              diff: "diff --git a/migrations/0042_drop_orders_v1.sql b/migrations/0042_drop_orders_v1.sql\nnew file mode 100644\n--- /dev/null\n+++ b/migrations/0042_drop_orders_v1.sql\n@@ -0,0 +1,2 @@\n+DROP TABLE orders_v1;\n+ALTER TABLE orders ALTER COLUMN total TYPE numeric(12,2);\n" },
+    risk: { label: "risky diff", state: "Disable TLS verification for the payments client",
+            diff: "diff --git a/src/payments/client.py b/src/payments/client.py\n--- a/src/payments/client.py\n+++ b/src/payments/client.py\n@@ -21,4 +21,4 @@ def charge(amount, card):\n-    resp = requests.post(URL, json=body, timeout=10)\n+    resp = requests.post(URL, json=body, timeout=10, verify=False)\n     return resp.json()\n" }
   };
+  var DIFF_TYPES = { pr: 1, deploy: 1, risk: 1 };
   var MODE_HINT = {
     local: "Instant and free. Questions without a trusted local answer show as \"not decided\".",
-    hybrid: "Local first, Claude for the rest. Needs ANTHROPIC_API_KEY on the server.",
-    llm: "Every question goes to Claude. Slower; needs ANTHROPIC_API_KEY on the server."
+    hybrid: "Local first; Claude answers only what stays unsure.",
+    llm: "Every question goes to Claude. Slower."
   };
-  var q = "triage", mode = "local", modelBackend = "unknown";
+  var q = "triage", mode = "local", shape = "single", health = null, presets = null, lastBatch = [];
+  var history = local.get("dd_history_v1") || [];
 
   function el(tag, cls, text) {
     var n = document.createElement(tag);
@@ -440,30 +497,65 @@
     if (text !== undefined) n.textContent = text;
     return n;
   }
-  function toast(msg) { var t = $("toast"); t.textContent = msg; t.classList.add("on"); setTimeout(function () { t.classList.remove("on"); }, 1600); }
-  function pressGroup(group, attr, cb) {
+  function toast(msg) { var t = $("toast"); t.textContent = msg; t.classList.add("on"); setTimeout(function () { t.classList.remove("on"); }, 1800); }
+  function pressGroup(group, cb) {
     Array.prototype.forEach.call(group.querySelectorAll("button"), function (b) {
       b.addEventListener("click", function () {
+        if (b.disabled) return;
         Array.prototype.forEach.call(group.querySelectorAll("button"), function (x) { x.setAttribute("aria-pressed", x === b ? "true" : "false"); });
-        cb(b.getAttribute(attr));
+        cb(b.getAttribute("data-v"));
       });
     });
   }
+  function select(group, value) { var b = group.querySelector('[data-v="' + value + '"]'); if (b) b.click(); }
 
-  $("token").value = store.get("dd_token");
-  pressGroup($("q"), "data-v", function (v) { q = v; $("diff-f").hidden = !(v === "pr" || v === "deploy" || v === "risk"); });
-  pressGroup($("mode"), "data-v", function (v) { mode = v; $("mode-hint").textContent = MODE_HINT[v]; });
-  Array.prototype.forEach.call(document.querySelectorAll(".ex"), function (b) {
-    b.addEventListener("click", function () {
-      var k = b.getAttribute("data-ex");
-      if (k === "diff") {
-        $("q").querySelector('[data-v="pr"]').click();
-        $("diff").value = EXAMPLES.diff; $("state").value = "Extend session lifetime";
-      } else {
-        $("q").querySelector(k === "inc" ? '[data-v="incident"]' : '[data-v="triage"]').click();
-        $("state").value = EXAMPLES[k]; $("diff").value = "";
-      }
+  // ---- access: the public demo token when the server has one, or your own
+  function token() { return $("token").value.trim(); }
+  function apiKey() { return $("apikey").value.trim(); }
+  function usingDemo() { return !!(health && health.demo_token && token() === health.demo_token); }
+  function updateAccess() {
+    var demo = usingDemo(), hasDemo = !!(health && health.demo_token);
+    $("tok-note").hidden = !hasDemo;
+    $("tok-note").textContent = demo ? "Using the public demo token: local answers, free. Add your Anthropic key below to ask Claude."
+                                     : "Using your own token.";
+    $("token").hidden = demo;
+    $("tok-toggle").hidden = !hasDemo;
+    $("tok-toggle").textContent = demo ? "use my own token" : "use the demo token";
+    var serverClaude = !!health && health.model !== "none" && !health.local_only && health.model_calls_left !== false && !demo;
+    var canClaude = !!apiKey() || serverClaude;
+    Array.prototype.forEach.call($("mode").querySelectorAll('[data-v="hybrid"],[data-v="llm"]'), function (b) {
+      b.disabled = !canClaude;
+      b.title = canClaude ? "" : (demo ? "Add your own Anthropic key to ask Claude with the demo token." : "This server cannot ask Claude right now; add your own Anthropic key.");
     });
+    if (!canClaude && mode !== "local") select($("mode"), "local");
+    $("mode-hint").textContent = MODE_HINT[mode] + (!canClaude && mode === "local" && demo ? " Add your own key to ask Claude." : "");
+  }
+  $("tok-toggle").addEventListener("click", function () {
+    if (usingDemo()) { $("token").value = session.get("dd_token") || ""; $("token").hidden = false; $("token").focus(); }
+    else { $("token").value = health.demo_token; }
+    updateAccess();
+  });
+  $("token").addEventListener("input", function () { if (!usingDemo()) session.set("dd_token", token()); updateAccess(); });
+  $("apikey").addEventListener("input", updateAccess);
+
+  // ---- controls
+  function renderExamples() {
+    var row = $("examples"); row.textContent = "";
+    row.appendChild(el("span", "hint", "Try:"));
+    Object.keys(EXAMPLES).forEach(function (k) {
+      var b = el("button", "ex", EXAMPLES[k].label); b.type = "button";
+      b.addEventListener("click", function () {
+        select($("shape"), "single"); select($("q"), k);
+        $("state").value = EXAMPLES[k].state; $("diff").value = EXAMPLES[k].diff || "";
+      });
+      row.appendChild(b);
+    });
+  }
+  pressGroup($("q"), function (v) { q = v; $("diff-f").hidden = shape !== "single" || !DIFF_TYPES[v]; });
+  pressGroup($("mode"), function (v) { mode = v; updateAccess(); });
+  pressGroup($("shape"), function (v) {
+    shape = v; $("single-f").hidden = v !== "single"; $("batch-f").hidden = v !== "batch";
+    $("diff-f").hidden = v !== "single" || !DIFF_TYPES[q];
   });
   Array.prototype.forEach.call(document.querySelectorAll(".copy"), function (b) {
     b.addEventListener("click", function () {
@@ -472,104 +564,206 @@
     });
   });
 
+  // ---- server status, demo token and cost warning
   fetch("/health").then(function (r) { return r.json(); }).then(function (d) {
+    health = d;
     $("dot").className = "dot ok";
-    modelBackend = d.model || "none";
-    var noModel = modelBackend === "none", capped = d.model_calls_left === false;
-    $("health").textContent = "online · v" + d.version + (noModel ? " · local only" : capped ? " · daily Claude limit reached" : " · Claude available");
-    if (noModel || capped) {
-      Array.prototype.forEach.call($("mode").querySelectorAll('[data-v="hybrid"],[data-v="llm"]'), function (b) {
-        b.disabled = true; b.title = noModel ? "This server has no ANTHROPIC_API_KEY, so it cannot ask Claude." : "The server's daily limit of Claude calls is used up.";
-      });
-      MODE_HINT.local = noModel ? "This server answers locally only (no Claude API key configured)." : "Claude's daily limit on this server is used up; answering locally.";
-      if (mode === "local") $("mode-hint").textContent = MODE_HINT.local;
+    var claude = d.local_only ? "local answers (own key for Claude)" : (d.model === "none" ? "local only" : "Claude available");
+    $("health").textContent = "online · v" + d.version + " · " + claude;
+    var mc = d.model_calls || {};
+    if (mc.warning) {
+      $("banner").hidden = false;
+      $("banner").textContent = "This server has used " + mc.used + " of " + mc.cap + " Claude calls today (" + Math.round(100 * mc.share) + "%). " +
+        (mc.used >= mc.cap ? "New requests are answered locally until tomorrow (UTC), unless you add your own key." : "Answers switch to local when the cap is reached.");
     }
-  }).catch(function () { $("dot").className = "dot bad"; $("health").textContent = "unreachable (it may be waking up)"; });
+    if (d.demo_token && !session.get("dd_token")) $("token").value = d.demo_token;
+    else $("token").value = session.get("dd_token") || "";
+    updateAccess();
+  }).catch(function () { $("dot").className = "dot bad"; $("health").textContent = "unreachable (it may be waking up)"; updateAccess(); });
 
+  // ---- results
   function answerValue(a) {
     if (a.type === "choose") return a.choice;
     if (a.type === "score") return a.score + " / 5";
     return (a.verdict ? "yes" : "no") + "  ·  p=" + a.p_true;
   }
-
-  function show(data, status) {
-    var out = $("out"); out.textContent = "";
-    if (data.error && !data.answers) {
-      out.appendChild(el("div", "err", (status === 401 ? "Wrong or missing token. " : "") + data.error));
-      return;
+  function canFeedback(decisionId) { return !!(health && health.learning && !usingDemo() && decisionId); }
+  function feedbackRow(decisionId, key, item) {
+    var row = el("div", "fb"), ok = el("button", "", "Right"), bad = el("button", "", "Wrong…");
+    ok.type = "button"; bad.type = "button";
+    function send(value, label) {
+      var body = { id: decisionId, answers: {} }; body.answers[key] = value;
+      if (item) body.item = item;
+      api("/v1/feedback", body).then(function (r) {
+        row.textContent = "";
+        row.appendChild(el("span", r.ok ? "done" : "err", r.ok ? label : (r.data.error || "could not save")));
+      }).catch(function () { row.textContent = ""; row.appendChild(el("span", "err", "could not reach the server")); });
     }
-    var gates = data.gates || {};
-    Object.keys(gates).forEach(function (g) {
-      var v = gates[g], box = el("div", "verdict " + v.verdict), txt = el("div");
-      txt.appendChild(el("div", "big", g + " · " + v.verdict.toUpperCase()));
-      var why = (v.fired || []).concat((v.uncertain || []).map(function (u) { return u + " is unsure"; }));
-      if (why.length) txt.appendChild(el("div", "why", why.slice(0, 3).join("  ·  ")));
-      box.appendChild(txt); out.appendChild(box);
+    ok.addEventListener("click", function () { send("ok", "Thanks: confirmed. It learns from this."); });
+    bad.addEventListener("click", function () {
+      loadPresets().then(function () {
+        var p = presets && presets[key], opts = [];
+        if (p && p.type === "choose") opts = p.options;
+        else if (p && p.type === "score") { for (var i = p.min; i <= p.max; i++) opts.push(String(i)); }
+        else opts = ["true", "false"];
+        var sel = el("select"), save = el("button", "", "Save"); save.type = "button";
+        opts.forEach(function (o) { var op = el("option", "", o); op.value = o; sel.appendChild(op); });
+        row.textContent = ""; row.appendChild(el("span", "hint", "Correct answer:")); row.appendChild(sel); row.appendChild(save);
+        save.addEventListener("click", function () { send(sel.value, "Saved: " + key + " is " + sel.value + ". It learns from this."); });
+      });
     });
-    var meta = data.meta || {}, via = meta.via || {}, local = 0, model = 0;
-    Object.keys(via).forEach(function (k) { if (LOCAL[k]) local += via[k]; else if (k.indexOf("llm") === 0) model += via[k]; });
+    row.appendChild(ok); row.appendChild(bad);
+    return row;
+  }
+  function renderWarnings(out, meta) {
+    var w = (meta && meta.warnings) || [];
+    if (!w.length) return;
+    var ul = el("ul", "warns");
+    w.slice(0, 4).forEach(function (x) { ul.appendChild(el("li", "", x)); });
+    out.appendChild(ul);
+  }
+  function renderMeta(out, meta) {
+    var via = meta.via || {}, localN = 0, model = 0;
+    Object.keys(via).forEach(function (k) { if (LOCAL[k]) localN += via[k]; else if (k.indexOf("llm") === 0) model += via[k]; });
     var m = el("div", "meta");
-    var guesses = via.hint || 0;
-    m.appendChild(el("span", "pill", local + " trusted local"));
-    if (guesses) m.appendChild(el("span", "pill", guesses + " rough guess" + (guesses > 1 ? "es" : "")));
-    if (model) m.appendChild(el("span", "pill", model + " by Claude"));
-    if (meta.ms) m.appendChild(el("span", "pill", meta.cache ? "cached · " + meta.ms.total + " ms" : meta.ms.total + " ms"));
+    m.appendChild(el("span", "pill", localN + " trusted local"));
+    if (via.hint) m.appendChild(el("span", "pill", via.hint + " rough guess" + (via.hint > 1 ? "es" : "")));
+    if (model) m.appendChild(el("span", "pill", model + " by Claude" + (meta.own_key ? " (your key)" : "")));
+    if (meta.ms) m.appendChild(el("span", "pill", meta.ms.total + " ms"));
     if (meta.cost_usd) m.appendChild(el("span", "pill", "$" + meta.cost_usd));
     out.appendChild(m);
-
-    var list = el("div", "answers"), answers = data.answers || {};
+  }
+  function renderAnswers(container, answers, decisionId) {
+    var list = el("div", "answers");
     Object.keys(answers).forEach(function (k) {
       var a = answers[k], card = el("div", "ans"), top = el("div", "ans-top"), left = el("div");
       left.appendChild(el("div", "key", k));
       if (a.error) {
-        left.appendChild(el("div", "val none", mode === "local" ? "not decided locally" : a.error.replace(/^not decided: /, "not decided: ")));
+        left.appendChild(el("div", "val none", mode === "local" ? "not decided locally" : a.error));
         top.appendChild(left); card.appendChild(top); list.appendChild(card); return;
       }
       var v = a.via || "";
-      if (v === "hint") {  // a quick local heuristic, not a trusted answer: show it as a guess, without a confidence bar
+      if (v === "hint") {
         card.className = "ans guess";
         left.appendChild(el("div", "val", answerValue(a)));
+        top.appendChild(left); top.appendChild(el("span", "src-tag", "rough guess")); card.appendChild(top);
+        card.appendChild(el("div", "guess-note", "Local heuristic only, not a trusted answer."));
+      } else {
+        left.appendChild(el("div", "val" + (a.abstain ? " unsure" : ""), answerValue(a) + (a.abstain ? "  ?" : "")));
         top.appendChild(left);
-        top.appendChild(el("span", "src-tag", "rough guess"));
+        top.appendChild(el("span", "src-tag " + (LOCAL[v] ? "local" : v.indexOf("llm") === 0 ? "model" : ""), v));
         card.appendChild(top);
-        card.appendChild(el("div", "guess-note", "Local heuristic only, not a trusted answer." + (modelBackend !== "none" ? " Use Hybrid for a real one." : "")));
-        list.appendChild(card);
-        return;
+        var bar = el("div", "bar"), fill = el("i"); fill.style.width = "0%"; bar.appendChild(fill); card.appendChild(bar);
+        card.appendChild(el("div", "conf", Math.round(a.confidence * 100) + "% confidence" + (a.abstain ? " · below threshold, check it" : "")));
+        requestAnimationFrame(function () { fill.style.width = (a.confidence * 100) + "%"; });
       }
-      left.appendChild(el("div", "val" + (a.abstain ? " unsure" : ""), answerValue(a) + (a.abstain ? "  ?" : "")));
-      top.appendChild(left);
-      top.appendChild(el("span", "src-tag " + (LOCAL[v] ? "local" : v.indexOf("llm") === 0 ? "model" : ""), v));
-      card.appendChild(top);
-      var bar = el("div", "bar"), fill = el("i"); fill.style.width = "0%"; bar.appendChild(fill); card.appendChild(bar);
-      card.appendChild(el("div", "conf", Math.round(a.confidence * 100) + "% confidence" + (a.abstain ? " · below threshold, check it" : "")));
+      if (canFeedback(decisionId)) card.appendChild(feedbackRow(decisionId, k, null));
       list.appendChild(card);
-      requestAnimationFrame(function () { fill.style.width = (a.confidence * 100) + "%"; });
     });
-    out.appendChild(list);
+    container.appendChild(list);
+  }
+  function show(data, status) {
+    var out = $("out"); out.textContent = "";
+    if (data.error && !data.answers && !data.items) {
+      out.appendChild(el("div", "err", (status === 401 ? "Wrong or missing token. " : "") + data.error));
+      return;
+    }
+    var meta = data.meta || {};
+    if (data.items) {
+      renderMeta(out, meta); renderWarnings(out, meta);
+      var t = el("table", "btable"), head = el("tr");
+      ["#", "Input", "Answer", "Gate"].forEach(function (h) { head.appendChild(el("th", "", h)); });
+      t.appendChild(head);
+      data.items.forEach(function (it, i) {
+        var tr = el("tr"); tr.appendChild(el("td", "", it.id || String(i + 1)));
+        tr.appendChild(el("td", "in", (lastBatch[i] || "").slice(0, 140)));
+        var ans = it.answers || {}, parts = [];
+        Object.keys(ans).slice(0, 3).forEach(function (k) {
+          var a = ans[k]; if (!a.error) parts.push(k + ": " + answerValue(a) + (a.via === "hint" ? " (guess)" : a.abstain ? " ?" : ""));
+        });
+        tr.appendChild(el("td", "", it.error ? it.error : (parts.join(" · ") || "not decided")));
+        var g = it.gates || {}, gk = Object.keys(g)[0], td = el("td");
+        if (gk) td.appendChild(el("span", "vp " + g[gk].verdict, g[gk].verdict.toUpperCase()));
+        tr.appendChild(td); t.appendChild(tr);
+      });
+      out.appendChild(t);
+    } else {
+      var gates = data.gates || {};
+      Object.keys(gates).forEach(function (g) {
+        var v = gates[g], box = el("div", "verdict " + v.verdict), txt = el("div");
+        txt.appendChild(el("div", "big", g + " · " + v.verdict.toUpperCase()));
+        var why = (v.fired || []).concat((v.uncertain || []).map(function (u) { return u + " is unsure"; }));
+        if (why.length) txt.appendChild(el("div", "why", why.slice(0, 3).join("  ·  ")));
+        box.appendChild(txt); out.appendChild(box);
+      });
+      renderMeta(out, meta); renderWarnings(out, meta);
+      renderAnswers(out, data.answers || {}, data.id);
+    }
     var d = el("details"); d.appendChild(el("summary", "", "Raw JSON"));
     d.appendChild(el("pre", "", JSON.stringify(data, null, 2))); out.appendChild(d);
   }
 
+  // ---- requests
+  function api(path, body) {
+    var headers = { "Authorization": "Bearer " + token(), "Content-Type": "application/json" };
+    if (apiKey()) headers["X-Anthropic-Api-Key"] = apiKey();
+    return fetch(path, { method: body ? "POST" : "GET", headers: headers, body: body ? JSON.stringify(body) : undefined })
+      .then(function (r) { return r.json().then(function (data) { return { ok: r.ok, status: r.status, data: data }; }); });
+  }
+  function loadPresets() {
+    if (presets) return Promise.resolve(presets);
+    return api("/v1/presets").then(function (r) { presets = (r.data && r.data.presets) || {}; return presets; });
+  }
   function decide() {
-    var token = $("token").value.trim(), state = $("state").value.trim(), diff = $("diff-f").hidden ? "" : $("diff").value.trim();
-    var out = $("out");
-    if (!token) { out.textContent = ""; out.appendChild(el("div", "err", "Enter your access token first.")); $("token").focus(); return; }
-    if (!state && !diff) { out.textContent = ""; out.appendChild(el("div", "err", "Add some text or a diff to decide about.")); $("state").focus(); return; }
-    store.set("dd_token", token);
-    var body = { questions: [q], mode: mode, why: false };
-    if (state) body.state = state;
-    if (diff) body.diff = diff;
+    var out = $("out"), body = { questions: [q], mode: mode, why: false };
+    if (!token()) { out.textContent = ""; out.appendChild(el("div", "err", "Enter your access token first.")); $("token").hidden = false; $("token").focus(); return; }
+    if (shape === "batch") {
+      lastBatch = $("batch").value.split("\n").map(function (x) { return x.trim(); }).filter(Boolean).slice(0, 50);
+      if (!lastBatch.length) { out.textContent = ""; out.appendChild(el("div", "err", "Add some inputs, one per line.")); return; }
+      body.items = lastBatch.map(function (x, i) { return { id: String(i + 1), state: x }; });
+    } else {
+      var state = $("state").value.trim(), diff = $("diff-f").hidden ? "" : $("diff").value.trim();
+      if (!state && !diff) { out.textContent = ""; out.appendChild(el("div", "err", "Add some text or a diff to decide about.")); $("state").focus(); return; }
+      if (state) body.state = state;
+      if (diff) body.diff = diff;
+    }
     var btn = $("go"); btn.disabled = true; btn.textContent = ""; btn.appendChild(el("span", "spinner")); btn.appendChild(document.createTextNode(" Deciding"));
     out.textContent = ""; var sk = el("div", "skeleton"); for (var i = 0; i < 4; i++) sk.appendChild(el("div")); out.appendChild(sk);
-    var status = 0;
-    fetch("/v1/decide", { method: "POST", headers: { "Authorization": "Bearer " + token, "Content-Type": "application/json" }, body: JSON.stringify(body) })
-      .then(function (r) { status = r.status; return r.json(); })
-      .then(function (data) { show(data, status); })
-      .catch(function () { out.textContent = ""; out.appendChild(el("div", "err", "Could not reach the server. If it was asleep, wait a minute and try again.")); })
-      .then(function () { btn.disabled = false; btn.textContent = "Decide →"; });
+    api("/v1/decide", body).then(function (r) {
+      show(r.data, r.status);
+      if (r.ok) remember(body, r.data);
+    }).catch(function () {
+      out.textContent = ""; out.appendChild(el("div", "err", "Could not reach the server. If it was asleep, wait a minute and try again."));
+    }).then(function () { btn.disabled = false; btn.textContent = "Decide →"; });
   }
   $("go").addEventListener("click", decide);
   document.addEventListener("keydown", function (e) { if ((e.ctrlKey || e.metaKey) && e.key === "Enter") decide(); });
+
+  // ---- history (this browser only)
+  function remember(body, data) {
+    history.unshift({ t: Date.now(), q: q, mode: mode, shape: shape, state: body.state || "", diff: body.diff || "",
+                      batch: body.items ? body.items.map(function (x) { return x.state; }).join("\n") : "",
+                      summary: (data.summary || "").replace(/^dev-decide \| /, "") });
+    history = history.slice(0, 25); local.set("dd_history_v1", history); renderHistory();
+  }
+  function renderHistory() {
+    var box = $("history"); box.textContent = "";
+    $("history-wrap").hidden = !history.length;
+    history.forEach(function (h) {
+      var b = el("button", "hitem"); b.type = "button";
+      b.appendChild(el("span", "s", h.q + " · " + (h.shape === "batch" ? "batch · " : "") + h.summary));
+      b.appendChild(el("span", "w", new Date(h.t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })));
+      b.addEventListener("click", function () {
+        select($("shape"), h.shape || "single"); select($("q"), h.q); select($("mode"), h.mode);
+        if (h.shape === "batch") $("batch").value = h.batch; else { $("state").value = h.state; $("diff").value = h.diff; }
+        window.scrollTo({ top: $("try").offsetTop - 70, behavior: "smooth" });
+      });
+      box.appendChild(b);
+    });
+  }
+  $("hist-clear").addEventListener("click", function () { history = []; local.set("dd_history_v1", history); renderHistory(); });
+
+  renderExamples(); renderHistory(); updateAccess();
 })();
 </script>
 </body>

@@ -180,6 +180,11 @@ def cmd_review(a, paths):
 
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):  # a Windows console cannot print every character in the report
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            pass
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("command", choices=["plan", "generate", "review", "train", "report", "export", "all"])
     ap.add_argument("action", nargs="?", help="for review: export or apply")

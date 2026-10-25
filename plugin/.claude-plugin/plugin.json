@@ -1,6 +1,6 @@
 {
   "name": "dev-decide",
-  "version": "5.0.1",
+  "version": "5.1.0",
   "description": "A decision engine for software and AI work: routes requests, triages issues, rates risk and gates pull requests. Runs on your machine; asks Claude with your own sign-in or ANTHROPIC_API_KEY.",
   "author": {"name": "pawanptu", "url": "https://github.com/pawanptu"},
   "homepage": "https://github.com/pawanptu/dev-decide",

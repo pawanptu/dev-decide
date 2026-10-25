@@ -1,0 +1,28 @@
+{
+  "route": {
+    "enabled": true,
+    "featurizer": "f4",
+    "kind": "choose",
+    "classes": [
+      "backend-reviewer",
+      "db-migrate",
+      "debugger",
+      "devops-deploy",
+      "docs-writer",
+      "frontend-dev",
+      "none",
+      "security-auditor",
+      "test-writer"
+    ],
+    "threshold": 0.6,
+    "temperature": 0.4536,
+    "source": "dev-decide-kit",
+    "trained": "2026-10-23 13:07:56",
+    "test_accuracy": 0.9057,
+    "test_ece": 0.0638,
+    "coverage": 0.9056603773584906,
+    "accepted_accuracy": 0.9375,
+    "reason": "accepted answers reach the target on held-out data",
+    "test_source": "held-out teacher labels"
+  }
+}

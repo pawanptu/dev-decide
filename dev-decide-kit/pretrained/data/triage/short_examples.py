@@ -52,7 +52,7 @@ TRAIN = {
     "support": [
         "I can't log in to my account", "Charged twice this month", "Please refund my order",
         "My account is locked", "Need to change the email on my account", "Cancel my subscription please",
-        "Invoice shows the wrong company name", "Lost access to my 2FA device", "Where is my order #4412?",
+        "Lost access to my 2FA device", "Where is my order #4412?",
         "Please delete my account", "Upgrade didn't apply to my plan",
         "Can't access the billing page for our team", "My trial ended early",
         "Transfer my workspace to a new owner", "Promo code not applied to my order",
@@ -112,6 +112,8 @@ TEST = {
     ],
 }
 
+# Checked blind by Sonnet (kit.py generate --from-file): 205 of 206 labels agreed; the one it disputed
+# ("Invoice shows the wrong company name": support or bug) was removed.
 SOURCE = "hand-labeled-short"
 
 

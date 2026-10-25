@@ -11,7 +11,7 @@ import subprocess
 import time
 from pathlib import Path
 
-VERSION = "5.0.1"
+VERSION = "5.1.0"
 SCRIPTS_DIR = Path(__file__).resolve().parent
 SKILL_DIR = SCRIPTS_DIR.parent
 SKILL_NAME = "dev-decide"
@@ -50,6 +50,19 @@ _ROOTS = {}  # (cwd, CLAUDE_PROJECT_DIR) -> (when, root): a long-running process
 ROOT_TTL_S = 30.0
 
 
+def _git_top(base):
+    """The nearest folder at or above base that holds .git (a folder, or a file in worktrees and submodules):
+    what `git rev-parse --show-toplevel` returns, without starting a process (about 50-100 ms on Windows)."""
+    try:
+        p = Path(base).resolve()
+    except OSError:
+        return None
+    for d in [p] + list(p.parents):
+        if (d / ".git").exists():
+            return d
+    return None
+
+
 def project_root(cwd=None):
     base = Path(cwd) if cwd else Path.cwd()
     env = os.environ.get("CLAUDE_PROJECT_DIR")
@@ -58,9 +71,12 @@ def project_root(cwd=None):
     now = time.monotonic()
     if hit and now - hit[0] < ROOT_TTL_S:
         return hit[1]
-    top = run(["git", "rev-parse", "--show-toplevel"], cwd=str(base))
-    if top and top.strip():
-        root = Path(top.strip())
+    top = _git_top(base)
+    if top is None and (os.environ.get("GIT_DIR") or os.environ.get("GIT_WORK_TREE")):
+        out = run(["git", "rev-parse", "--show-toplevel"], cwd=str(base))  # unusual layouts: ask git itself
+        top = Path(out.strip()) if out and out.strip() else None
+    if top is not None:
+        root = top
     elif env and Path(env).is_dir():
         root = Path(env)
     else:

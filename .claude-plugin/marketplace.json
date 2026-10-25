@@ -7,7 +7,7 @@
       "name": "dev-decide",
       "source": "./plugin",
       "description": "A decision engine for software and AI work: routes requests, triages issues, rates risk and gates pull requests. Answers locally in milliseconds when it can, asks Claude when it can't, and learns from every answer.",
-      "version": "5.0.1",
+      "version": "5.1.0",
       "category": "development",
       "keywords": ["decision", "triage", "pull-request", "risk", "routing", "gates"]
     }

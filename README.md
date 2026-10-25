@@ -1,4 +1,4 @@
-# dev-decide 5.0.1 + dev-decide-kit
+# dev-decide 5.1 + dev-decide-kit
 
 dev-decide is a Jev-style decision engine for software and AI work: a Claude Code skill, a command-line tool,
 an HTTP API and an opt-in routing hook. It answers typed questions (route this request, triage this issue, rate
@@ -27,9 +27,15 @@ Then use it in any repository, for example `/dev-decide pr :: DIFF` or `/dev-dec
   on the next run. Commit it to share settings with your team. It never overwrites a file you already have. Its
   values override your personal `~/.claude/dev-decide.json`, so delete a setting from the project file if you want
   your personal one to win.
-- **Routing hint hook is included.** On each prompt it checks, locally and in about 70 ms, whether one of your agents or
-  skills clearly matches, and only then adds a one-line hint. It never calls a model and never blocks a prompt. To
-  turn it off, put `{"router_hook": {"enabled": false}}` in `.claude/dev-decide.json`, or disable the plugin's hooks.
+- **Routing hint, in milliseconds.** On each prompt a small local server (started by a session-start hook, reached
+  through Claude Code's HTTP hook) checks whether one of your agents or skills clearly matches, and only then adds a
+  one-line hint: about 5 ms per prompt. It listens on 127.0.0.1 only, never calls a model, never blocks a prompt and
+  writes nothing. To turn it off, put `{"router_hook": {"enabled": false}}` in `.claude/dev-decide.json`, or disable
+  the plugin's hooks.
+- **Example agents.** `dev-decide-kit/example-agents/` holds eight Claude Code subagents (backend-reviewer,
+  db-migrate, frontend-dev, debugger, security-auditor, test-writer, devops-deploy, docs-writer). Copy them into
+  `~/.claude/agents/` and the shipped route model, trained on exactly these, answers routing locally (about 94%
+  accurate on held-out requests). It is never used for other agents.
 
 **Install from a clone instead** (for the HTTP API on your computer, or to choose whether to add the routing hook):
 
@@ -38,8 +44,15 @@ git clone https://github.com/pawanptu/dev-decide
 python3 dev-decide/dev-decide-v5/install.py              # add --router-hook for the routing hint
 ```
 
-**Web page and server.** `serve.py` also serves a web page with a live console at `/`. The root `Dockerfile` builds
-the server; `setup_deploy.md` covers deploying it (Render takes about 10 minutes).
+**Web page and server.** `serve.py` also serves a web page with a live console at `/`: a public demo token for
+visitors (local answers only), an optional field for your own Anthropic key (used for that request only, never
+stored), examples, batch mode, history kept in the browser, and right/wrong buttons that teach the model. The root
+`Dockerfile` builds the server; `setup_deploy.md` covers deploying it (Render takes about 10 minutes), keeping what it
+learns across restarts in a private repository, and the GitHub Actions that label issues and gate pull requests
+(`.github/workflows/dev-decide-*.yml`).
+
+**Benchmark.** `python3 tools/benchmark.py` trains with calibration, evaluates and writes the results table (add
+`--label-issues N --label-diffs M` to write and label new examples first). See `CHANGELOG.md` for what changed.
 
 **Maintainers:** the engine lives in `dev-decide-v5/skill/`. After changing it, run `python3 tools/sync.py` to copy it
 into `plugin/`, then `python3 tools/smoke.py` (CI runs the same checks on Linux and Windows, Python 3.8 and 3.12).

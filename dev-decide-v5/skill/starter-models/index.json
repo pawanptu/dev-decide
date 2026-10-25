@@ -42,7 +42,7 @@
   },
   "issue_type": {
     "enabled": true,
-    "featurizer": "f3",
+    "featurizer": "f2",
     "kind": "choose",
     "classes": [
       "bug",
@@ -53,21 +53,22 @@
       "support"
     ],
     "threshold": 0.6,
-    "temperature": 0.5322,
+    "temperature": 0.6583,
     "source": "dev-decide-kit",
-    "trained": "2026-10-25 00:25:49",
-    "test_accuracy": 0.8923,
-    "test_ece": 0.0706,
-    "coverage": 0.8923076923076924,
-    "accepted_accuracy": 0.9655172413793104,
+    "trained": "2026-10-25 07:36:07",
+    "test_accuracy": 0.9527,
+    "test_ece": 0.0408,
+    "coverage": 0.9256756756756757,
+    "accepted_accuracy": 0.9635036496350365,
     "reason": "accepted answers reach the target on held-out data",
     "test_source": "held-out teacher labels",
     "replaces": [
-      "2026-10-23 13:07:56"
+      "2026-10-23 13:07:56",
+      "2026-10-25 00:25:49"
     ]
   },
   "severity": {
-    "enabled": false,
+    "enabled": true,
     "featurizer": "f1",
     "kind": "choose",
     "classes": [
@@ -77,20 +78,23 @@
       "sev3_minor",
       "sev4_cosmetic"
     ],
-    "threshold": 0.7027429388825747,
-    "temperature": 0.3098,
+    "threshold": 0.7217508820406472,
+    "temperature": 1.1886,
     "source": "dev-decide-kit",
-    "trained": "2026-10-23 13:07:56",
-    "test_accuracy": 0.7857,
-    "test_ece": 0.1328,
-    "coverage": 0.6904761904761905,
-    "accepted_accuracy": 0.8275862068965517,
-    "reason": "accepted test accuracy 83% is below the 90% target",
-    "test_source": "held-out teacher labels"
+    "trained": "2026-10-25 07:36:07",
+    "test_accuracy": 0.7317,
+    "test_ece": 0.0859,
+    "coverage": 0.45528455284552843,
+    "accepted_accuracy": 0.9821428571428571,
+    "reason": "accepted answers reach the target on held-out data",
+    "test_source": "held-out teacher labels",
+    "replaces": [
+      "2026-10-23 13:07:56"
+    ]
   },
   "domain": {
-    "enabled": false,
-    "featurizer": "f3",
+    "enabled": true,
+    "featurizer": "f4",
     "kind": "choose",
     "classes": [
       "ai_agents",
@@ -126,15 +130,18 @@
       "testing_qa",
       "tooling_cli"
     ],
-    "threshold": 0.6921151277233516,
-    "temperature": 0.285,
+    "threshold": 0.6116919304054281,
+    "temperature": 0.5204,
     "source": "dev-decide-kit",
-    "trained": "2026-10-23 13:07:56",
-    "test_accuracy": 0.6842,
-    "test_ece": 0.1495,
-    "coverage": 0.47368421052631576,
-    "accepted_accuracy": 0.8888888888888888,
-    "reason": "accepted test accuracy 89% is not yet proven: its 95% lower bound is 67%",
-    "test_source": "held-out teacher labels"
+    "trained": "2026-10-25 07:36:07",
+    "test_accuracy": 0.8018,
+    "test_ece": 0.0578,
+    "coverage": 0.7027027027027027,
+    "accepted_accuracy": 0.9230769230769231,
+    "reason": "accepted answers reach the target on held-out data",
+    "test_source": "held-out teacher labels",
+    "replaces": [
+      "2026-10-23 13:07:56"
+    ]
   }
 }

@@ -3,6 +3,8 @@
 
   python3 serve.py [--port 8765] [--host 127.0.0.1] [--cwd /path/to/repo]
 
+GET  /              a web page with a live console (it holds no data; every call it makes needs a token)
+GET  /health        version, whether Claude is available, today's model-call use, and the public demo token if any
 POST /v1/decide
   {"state": "text to decide about",                      or "input": "DIFF" / "@path" / "COMMIT <sha>" (local only)
    "diff": "diff --git a/... b/...",                      optional: a unified diff sent inline, parsed like DIFF
@@ -10,28 +12,37 @@ POST /v1/decide
    "items": [{"id": "T-1", "state": "...", "diff": "..."}],   optional batch instead of "state"
    "mode": "hybrid" | "local" | "llm",  "why": false}
 -> the same JSON the CLI prints.
-GET /health -> {"ok": true, "version": "..."}
 POST /v1/feedback  {"id": "<decision id> or last", "answers": {"issue_type": "bug"}, "item": "<item id, batches only>"}
                    corrects (or, with "ok", confirms) answers: they are learned from at once and remembered
-GET /v1/learning -> what has been learned, spot-check results and the latest model switches
+GET  /v1/presets   the questions this server knows, with their options (for feedback forms)
+GET  /v1/learning  what has been learned, spot-check results and the latest model switches
 
-Limits (per server process, so a restart resets them):
+Tokens:
+  DEV_DECIDE_TOKEN       (16+ characters) full access: model calls on this server's key, feedback, learning status.
+                         Send "Authorization: Bearer <token>" (or "X-Dev-Decide-Token: <token>").
+  DEV_DECIDE_DEMO_TOKEN  optional public token for a demo (the page fills it in): answers are local only unless the
+                         caller brings their own key; nothing about demo requests is stored or learned from, and
+                         feedback and /v1/learning are refused.
+Bring-your-own-key: a request may carry "X-Anthropic-Api-Key: sk-ant-...". That key pays for that request's model
+calls only; it is never stored, logged or cached, and those calls do not count against the daily cap.
+
+Limits and modes (per server process, so a restart resets the counters):
   DEV_DECIDE_RATE_PER_MIN         requests per minute from one client address (default 30; 0 turns it off)
-  DEV_DECIDE_MODEL_CALLS_PER_DAY  model calls per UTC day; past it, requests are answered locally (default 300; 0 = no cap)
+  DEV_DECIDE_MODEL_CALLS_PER_DAY  model calls per UTC day on this server's key; past it, requests are answered
+                                  locally (default 300; 0 = no cap). From 80% on, responses carry a warning.
+  DEV_DECIDE_LOCAL_ONLY=1         never use this server's key: every request is answered locally (own keys still work)
   DEV_DECIDE_TRUST_PROXY=1        take the client address from X-Forwarded-For (set it only behind a proxy that writes it)
+  DEV_DECIDE_STATE_REPO           keep what the server learns in a git repository (see statesync.py)
 
-Authentication: when the environment variable DEV_DECIDE_TOKEN is set (16 characters or more), every
-endpoint except /health needs "Authorization: Bearer <token>" (or "X-Dev-Decide-Token: <token>").
-It listens on 127.0.0.1 by default. To listen beyond this machine (--host 0.0.0.0, as in a container),
-a token is required, and DIFF, COMMIT and @path are not read (callers send "diff" instead); pass
---allow-no-auth only behind your own authenticating proxy, and --allow-file-refs only if every caller
-may read this machine's files. Custom questions are answered by the model tier until you define them as
-presets in .claude/dev-decide.json, log answers and train them.
+It listens on 127.0.0.1 by default. To listen beyond this machine (--host 0.0.0.0, as in a container), a token
+is required, and DIFF, COMMIT and @path are not read (callers send "diff" instead); pass --allow-no-auth only
+behind your own authenticating proxy, and --allow-file-refs only if every caller may read this machine's files.
 """
 import argparse
 import hmac
 import json
 import os
+import re
 import signal
 import sys
 import threading
@@ -48,6 +59,19 @@ import inputs  # noqa: E402
 MAX_BODY = 4 * 1024 * 1024
 MIN_TOKEN = 16
 LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
+WARN_AT = 0.8
+API_KEY_HEADER = "X-Anthropic-Api-Key"
+API_KEY_FORMAT = re.compile(r"^sk-ant-[A-Za-z0-9_\-]{20,300}$")
+SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "X-Frame-Options": "DENY",
+    "Cross-Origin-Opener-Policy": "same-origin",
+    "Cross-Origin-Resource-Policy": "same-origin",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+}
+PAGE_CSP = ("default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; "
+            "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
 
 
 def _env_int(name, default):
@@ -65,6 +89,7 @@ class Limits(object):
         self.lock = threading.Lock()
         self.hits = {}           # client address -> deque of request times in the last minute
         self.day, self.calls = None, 0
+        self.warned = set()      # thresholds already logged today
 
     def allow(self, client):
         if not self.per_min:
@@ -85,7 +110,7 @@ class Limits(object):
     def _today(self):
         day = time.strftime("%Y-%m-%d", time.gmtime())
         if day != self.day:
-            self.day, self.calls = day, 0
+            self.day, self.calls, self.warned = day, 0, set()
 
     def model_allowed(self):
         with self.lock:
@@ -96,27 +121,49 @@ class Limits(object):
         with self.lock:
             self._today()
             self.calls += int(n or 0)
+            for share in (WARN_AT, 1.0):  # one log line per threshold per day
+                if self.calls_per_day and self.calls >= share * self.calls_per_day and share not in self.warned:
+                    self.warned.add(share)
+                    sys.stderr.write("dev-decide warning: %d of %d model calls used today (%d%%)\n"
+                                     % (self.calls, self.calls_per_day, round(100.0 * self.calls / self.calls_per_day)))
+
+    def usage(self):
+        with self.lock:
+            self._today()
+            cap = self.calls_per_day
+            share = (self.calls / float(cap)) if cap else 0.0
+            return {"used": self.calls, "cap": cap or None, "share": round(share, 3), "warning": bool(cap) and share >= WARN_AT}
 
 
-def make_handler(cwd, token=None, local_only=True, limits=None, trust_proxy=False):
+def make_handler(cwd, token=None, local_only=True, limits=None, trust_proxy=False, demo_token=None, server_local=False):
+    """local_only: listening on this machine only. server_local: never use this server's own key (DEV_DECIDE_LOCAL_ONLY)."""
     secret = token.encode("utf-8") if token else None
+    demo = demo_token.encode("utf-8") if demo_token else None
     limits = limits or Limits(0, 0)
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "dev-decide/" + dd.VERSION
         timeout = 60  # seconds a client may stall while sending; model calls are not limited by this
 
+        def end_headers(self):
+            for k, v in SECURITY_HEADERS.items():
+                self.send_header(k, v)
+            if trust_proxy and (self.headers.get("X-Forwarded-Proto") or "").lower() == "https":
+                self.send_header("Strict-Transport-Security", "max-age=31536000")
+            super().end_headers()
+
         def _send(self, code, obj, headers=None):
             body = json.dumps(obj).encode("utf-8")
             self.send_response(code)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
             for k, v in (headers or {}).items():
                 self.send_header(k, v)
             self.end_headers()
             self.wfile.write(body)
 
-        def log_message(self, fmt, *args):
+        def log_message(self, fmt, *args):  # the request line and status only: never headers (tokens, keys)
             sys.stderr.write("dev-decide %s\n" % (fmt % args))
 
         def _same_machine(self):
@@ -132,17 +179,33 @@ def make_handler(cwd, token=None, local_only=True, limits=None, trust_proxy=Fals
                 return o in LOCAL_HOSTS
             return True
 
-        def _authorized(self):
+        def _role(self):
+            """"admin", "demo", or None (not authorized)."""
             if not self._same_machine():
-                return False
+                return None
             if secret is None:
-                return True
+                return "admin"
             sent = (self.headers.get("X-Dev-Decide-Token") or "").strip()
             if not sent:
                 auth = (self.headers.get("Authorization") or "").strip()
                 if auth[:7].lower() == "bearer ":
                     sent = auth[7:].strip()
-            return bool(sent) and hmac.compare_digest(sent.encode("utf-8"), secret)
+            if not sent:
+                return None
+            if hmac.compare_digest(sent.encode("utf-8"), secret):
+                return "admin"
+            if demo is not None and hmac.compare_digest(sent.encode("utf-8"), demo):
+                return "demo"
+            return None
+
+        def _api_key(self):
+            """The caller's own Anthropic key, or None; ValueError when the header is present but malformed."""
+            key = (self.headers.get(API_KEY_HEADER) or "").strip()
+            if not key:
+                return None
+            if not API_KEY_FORMAT.match(key):
+                raise ValueError("the %s header does not look like an Anthropic API key (sk-ant-...)" % API_KEY_HEADER)
+            return key
 
         def _client(self):
             if trust_proxy:  # the last entry is the one our own proxy added; earlier ones can be forged
@@ -158,33 +221,48 @@ def make_handler(cwd, token=None, local_only=True, limits=None, trust_proxy=Fals
             return True
 
         def _deny(self):
-            self._send(401, {"error": "unauthorized: send the header Authorization: Bearer <your DEV_DECIDE_TOKEN>"},
+            self._send(401, {"error": "unauthorized: send the header Authorization: Bearer <your token>"},
                        {"WWW-Authenticate": "Bearer"})
+
+        def _forbid(self, what):
+            self._send(403, {"error": "the demo token cannot %s; use your own token" % what})
+
+        def _health(self):
+            out = {"ok": True, "version": dd.VERSION, "model": "none" if server_local else _model_backend(cwd),
+                   "model_calls_left": limits.model_allowed(), "model_calls": limits.usage(),
+                   "local_only": server_local, "learning": _learning_on(cwd), "byok": True}
+            if demo_token:
+                out["demo_token"] = demo_token  # public by design: it can only get local answers
+            return out
 
         def do_GET(self):
             path = self.path.split("?", 1)[0].rstrip("/")
             if path == "/health":
-                self._send(200, {"ok": True, "version": dd.VERSION, "model": _model_backend(cwd),
-                                 "model_calls_left": limits.model_allowed()})
-            elif path in ("", "/ui"):  # the page holds no data; every call it makes still needs the token
+                self._send(200, self._health())
+            elif path in ("", "/ui"):  # the page holds no data; every call it makes still needs a token
                 page = (dd.SKILL_DIR / "ui.html").read_bytes()
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(page)))
-                self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; "
-                                 "script-src 'unsafe-inline'; img-src data:; connect-src 'self'")
-                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("Content-Security-Policy", PAGE_CSP)
+                self.send_header("Cache-Control", "no-cache")
                 self.end_headers()
                 self.wfile.write(page)
             elif self._throttled():
                 return
-            elif not self._authorized():
-                self._deny()
-            elif path == "/v1/learning":
-                import learn
-                self._send(200, learn.command("status", cwd=cwd))
             else:
-                self._send(404, {"error": "not found"})
+                role = self._role()
+                if role is None:
+                    self._deny()
+                elif path == "/v1/presets":
+                    self._send(200, _presets(cwd))
+                elif path == "/v1/learning":
+                    if role == "demo":
+                        return self._forbid("read the learning status")
+                    import learn
+                    self._send(200, learn.command("status", cwd=cwd))
+                else:
+                    self._send(404, {"error": "not found"})
 
         def do_POST(self):
             path = self.path.split("?", 1)[0].rstrip("/")
@@ -194,7 +272,8 @@ def make_handler(cwd, token=None, local_only=True, limits=None, trust_proxy=Fals
                 length = 0
             if self._throttled():
                 return
-            if not self._authorized():
+            role = self._role()
+            if role is None:
                 if 0 < length <= MAX_BODY:
                     self.rfile.read(length)  # drain it, so the client reads the 401 instead of a reset
                 self._deny()
@@ -214,6 +293,8 @@ def make_handler(cwd, token=None, local_only=True, limits=None, trust_proxy=Fals
                 self._send(400, {"error": "body must be a JSON object"})
                 return
             if path == "/v1/feedback":
+                if role == "demo":
+                    return self._forbid("send feedback")
                 import learn
                 answers = spec.get("answers")
                 if not isinstance(answers, dict) or not answers:
@@ -222,19 +303,40 @@ def make_handler(cwd, token=None, local_only=True, limits=None, trust_proxy=Fals
                 out = learn.feedback(cwd, spec.get("id") or "last", answers, spec.get("item"))
                 self._send(400 if out.get("error") else 200, out)
                 return
-            capped = not limits.model_allowed() and str(spec.get("mode") or "").lower() != "local"
-            if capped:
-                spec["mode"] = "local"
             try:
-                out = engine.decide(spec=spec, cwd=cwd)
+                api_key = self._api_key()
+            except ValueError as exc:
+                self._send(400, {"error": str(exc)})
+                return
+            notes = []
+            wants_model = str(spec.get("mode") or "").lower() != "local"
+            if api_key is None and wants_model:  # this server's own key would be used
+                if role == "demo":
+                    spec["mode"] = "local"
+                    notes.append("demo token: answered locally; add your own Anthropic key to ask Claude")
+                elif server_local:
+                    spec["mode"] = "local"
+                    notes.append("this server answers locally only; add your own Anthropic key to ask Claude")
+                elif not limits.model_allowed():
+                    spec["mode"] = "local"
+                    notes.append("the server's daily model-call cap is reached; answered locally")
+            try:
+                out = engine.decide(spec=spec, cwd=cwd, api_key=api_key, ephemeral=(role == "demo"))
             except Exception as exc:
                 self._send(500, {"error": "engine error: %s" % type(exc).__name__})
                 return
             meta = out.get("meta") if isinstance(out.get("meta"), dict) else None
             if meta is not None:
-                limits.spent(meta.get("model_calls"))
-                if capped:
-                    meta.setdefault("warnings", []).append("the server's daily model-call cap is reached; answered locally")
+                if api_key is None:
+                    limits.spent(meta.get("model_calls"))
+                else:
+                    meta["own_key"] = True  # paid by the caller; not counted against the server's cap
+                u = limits.usage()
+                if u["warning"] and api_key is None and role == "admin":
+                    notes.append("this server has used %d of %d model calls today (%d%%)"
+                                 % (u["used"], u["cap"], round(100 * u["share"])))
+                if notes:
+                    meta["warnings"] = (meta.get("warnings") or []) + notes
             self._send(400 if out.get("error") and not out.get("answers") and not out.get("items") else 200, out)
 
     return Handler
@@ -247,6 +349,38 @@ def _model_backend(cwd):
         return llm.backend_choice(dd.load_policy(dd.project_root(cwd)))
     except Exception:
         return "none"
+
+
+def _learning_on(cwd):
+    try:
+        import learn
+        return bool(learn.config(dd.load_policy(dd.project_root(cwd)))["enabled"])
+    except Exception:
+        return False
+
+
+def _presets(cwd):
+    """Every question this server knows, with the answers it accepts (for feedback forms)."""
+    root = dd.project_root(cwd)
+    policy = dd.load_policy(root)
+    cat = dd.load_catalog(policy)
+    out = {}
+    for kind in ("choose", "score", "verify"):
+        for name, spec in cat[kind].items():
+            spec = spec if isinstance(spec, dict) else {}
+            if kind == "choose":
+                opts = spec.get("options")
+                if opts == "auto":
+                    opts = [r["name"] for r in dd.discover_routes(root, policy)]
+                opts = list(opts or [])
+                if spec.get("allow_none") and "none" not in opts:
+                    opts.append("none")
+                out[name] = {"type": "choose", "options": opts}
+            elif kind == "score":
+                out[name] = {"type": "score", "min": int(spec.get("min", 1)), "max": int(spec.get("max", 5))}
+            else:
+                out[name] = {"type": "verify", "options": ["true", "false"]}
+    return {"presets": out, "bundles": cat["bundles"]}
 
 
 def main():
@@ -263,11 +397,19 @@ def main():
     args = ap.parse_args()
 
     token = (os.environ.get(args.token_env) or "").strip() or None
+    demo_token = (os.environ.get("DEV_DECIDE_DEMO_TOKEN") or "").strip() or None
     local = args.host in LOCAL_HOSTS
-    if token and len(token) < MIN_TOKEN:
-        sys.stderr.write("%s is too short (%d characters; use at least %d). Make one with:\n"
-                         "  python3 -c \"import secrets; print(secrets.token_urlsafe(32))\"\n"
-                         % (args.token_env, len(token), MIN_TOKEN))
+    for name, value in ((args.token_env, token), ("DEV_DECIDE_DEMO_TOKEN", demo_token)):
+        if value and len(value) < MIN_TOKEN:
+            sys.stderr.write("%s is too short (%d characters; use at least %d). Make one with:\n"
+                             "  python3 -c \"import secrets; print(secrets.token_urlsafe(32))\"\n"
+                             % (name, len(value), MIN_TOKEN))
+            return 2
+    if demo_token and not token:
+        sys.stderr.write("DEV_DECIDE_DEMO_TOKEN needs %s as well (the demo token is the limited one)\n" % args.token_env)
+        return 2
+    if demo_token and token and hmac.compare_digest(demo_token, token):
+        sys.stderr.write("DEV_DECIDE_DEMO_TOKEN must differ from %s: the demo token is public\n" % args.token_env)
         return 2
     if not local and not token and not args.allow_no_auth:
         sys.stderr.write("refusing to listen on %s without a token: set %s (at least %d characters), "
@@ -278,13 +420,24 @@ def main():
         inputs.REFS = False  # remote callers must not read this machine's files; they send "diff" instead
 
     cwd = str(Path(args.cwd).resolve())
+    sync = None
+    if os.environ.get("DEV_DECIDE_STATE_REPO"):
+        import statesync
+        sync = statesync.StateSync.from_env(cwd)
+        if sync is not None:
+            sync.restore()  # what this server learned before its last restart
+            sync.start()
     limits = Limits(_env_int("DEV_DECIDE_RATE_PER_MIN", 30), _env_int("DEV_DECIDE_MODEL_CALLS_PER_DAY", 300))
     trust_proxy = os.environ.get("DEV_DECIDE_TRUST_PROXY") == "1"
-    httpd = ThreadingHTTPServer((args.host, args.port), make_handler(cwd, token, local, limits, trust_proxy))
-    sys.stderr.write("dev-decide %s listening on http://%s:%d (repo: %s; %s; file references %s)\n"
+    server_local = os.environ.get("DEV_DECIDE_LOCAL_ONLY") == "1"
+    httpd = ThreadingHTTPServer((args.host, args.port),
+                                make_handler(cwd, token, local, limits, trust_proxy, demo_token, server_local))
+    sys.stderr.write("dev-decide %s listening on http://%s:%d (repo: %s; %s%s; file references %s%s)\n"
                      % (dd.VERSION, args.host, args.port, cwd,
                         "token required" if token else "no authentication",
-                        "on" if inputs.REFS else "off"))
+                        " + public demo token" if demo_token else "",
+                        "on" if inputs.REFS else "off",
+                        "; local answers only" if server_local else ""))
     if not token and not local:
         sys.stderr.write("warning: no authentication; anyone who can reach %s:%d can use it\n" % (args.host, args.port))
 
@@ -298,6 +451,8 @@ def main():
         pass
     finally:
         httpd.server_close()
+        if sync is not None:
+            sync.stop()  # save what was learned since the last save
     return 0
 
 

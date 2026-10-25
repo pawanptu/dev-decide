@@ -389,11 +389,71 @@ def _upgrade_starters(src, dest):
         dd.write_json(dest / "index.json", index, indent=2)
 
 
+OPTIONAL_DIR = dd.SKILL_DIR / "starter-models" / "optional"
+
+
+def _fits(entry, names):
+    """An optional model fits when every class it can answer (other than none) is an agent or skill here."""
+    classes = set(entry.get("classes") or []) - {"none", "_rest"}
+    return bool(classes) and classes <= set(names)
+
+
+def seed_optional(root, policy):
+    """Install optional starter models that fit this repository (the route model when the example agents exist).
+
+    Never replaces a model the repository already has under that name.
+    """
+    starters = dd.read_json(OPTIONAL_DIR / "index.json", default={}) or {}
+    if not starters:
+        return
+    dest = Path(root) / ".claude" / "dev-decide" / "models"
+    index = dd.read_json(dest / "index.json", default={}) or {}
+    todo = [p for p in starters if p not in index]
+    if not todo:
+        return
+    names = [r["name"] for r in dd.discover_routes(root, policy)]
+    changed = False
+    try:
+        import shutil
+        for preset in todo:
+            if not _fits(starters[preset], names):
+                continue
+            dest.mkdir(parents=True, exist_ok=True)
+            for ext in (".bin", ".json"):
+                shutil.copy2(str(OPTIONAL_DIR / (preset + ext)), str(dest / (preset + ext)))
+            index[preset] = starters[preset]
+            changed = True
+        if changed:
+            dd.write_json(dest / "index.json", index, indent=2)
+    except OSError:
+        pass
+
+
+def optional_registry(names):
+    """A read-only Registry over the optional starter models that fit these agent and skill names, or None.
+
+    The routing hook uses it in repositories that have no route model yet: it never writes anything."""
+    starters = dd.read_json(OPTIONAL_DIR / "index.json", default={}) or {}
+    if not any(_fits(e, names) for e in starters.values()):
+        return None
+    reg = Registry(None, models_dir=OPTIONAL_DIR)
+    reg.index = {p: e for p, e in reg.index.items() if _fits(e, names)}
+    return reg
+
+
+def class_floor(model, label):
+    """The extra confidence one class needs (kit training measured where its answers reach the target)."""
+    try:
+        return float(((model or {}).get("class_thresholds") or {}).get(str(label), 0.0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
 class Registry(object):
     """Loads only the enabled models for the presets a request asks about."""
 
-    def __init__(self, root):
-        self.dir = Path(root) / ".claude" / "dev-decide" / "models"
+    def __init__(self, root, models_dir=None):
+        self.dir = Path(models_dir) if models_dir else Path(root) / ".claude" / "dev-decide" / "models"
         ipath = self.dir / "index.json"
         sig = _signature(ipath)
         hit = _LOADED.get(str(ipath))
@@ -461,7 +521,7 @@ class Registry(object):
             adapt = float(adapt or 0.0)
         except (TypeError, ValueError):
             adapt = 0.0
-        if probs[best] < float(model.get("threshold", 0.95)) + adapt:
+        if probs[best] < max(float(model.get("threshold", 0.95)), class_floor(model, best)) + adapt:
             return None
         if kind == "verify":
             return {"type": "verify", "p_true": round(probs.get("true", 0.0), 4)}

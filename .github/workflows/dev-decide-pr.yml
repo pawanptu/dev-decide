@@ -1,0 +1,68 @@
+name: dev-decide PR gate
+
+# Rates each pull request with dev-decide's pr bundle (risk, breaking change, secrets, security, tests,
+# migrations, review verdict), keeps one up-to-date comment on the PR, and fails the check when the gate
+# says block. Needs repository secrets DD_URL and DD_TOKEN. Pull requests from forks get no secrets and are
+# skipped. The PR's code is never run: only its diff is read.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Ask dev-decide about the diff
+        env:
+          DD_URL: ${{ secrets.DD_URL }}
+          DD_TOKEN: ${{ secrets.DD_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.pull_request.number }}
+          TITLE: ${{ github.event.pull_request.title }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DD_URL:-}" ] || [ -z "${DD_TOKEN:-}" ]; then
+            echo "DD_URL and DD_TOKEN secrets are not set (or this PR comes from a fork); skipping."; exit 0
+          fi
+          git diff "$BASE...$HEAD" | head -c 1500000 > pr.diff
+          if [ ! -s pr.diff ]; then echo "Empty diff; nothing to rate."; exit 0; fi
+          jq -n --rawfile d pr.diff --arg t "$TITLE" '{questions: ["pr"], diff: $d, state: $t, mode: "hybrid"}' > req.json
+          curl -sS --fail-with-body --retry 6 --retry-delay 20 --retry-all-errors -m 150 \
+            -H "Authorization: Bearer $DD_TOKEN" -H "Content-Type: application/json" \
+            --data @req.json "${DD_URL%/}/v1/decide" > out.json
+          jq -r '.summary' out.json
+          verdict=$(jq -r '.gates.pr.verdict // "review"' out.json)
+
+          {
+            echo "<!-- dev-decide -->"
+            echo "**dev-decide PR gate: ${verdict^^}**"
+            jq -r '.gates.pr.fired // [] | if length > 0 then "\nRules that fired: " + join("; ") else empty end' out.json
+            jq -r '.gates.pr.uncertain // [] | if length > 0 then "\nUnsure, so a human should look: " + join(", ") else empty end' out.json
+            echo
+            echo "| Question | Answer | Confidence | Source |"
+            echo "|---|---|---|---|"
+            jq -r '.answers | to_entries[] | select(.value.error == null) |
+              "| \(.key) | \(.value.choice // .value.score // .value.verdict) | \((.value.confidence * 100 | floor))%\(if .value.abstain then " (unsure)" else "" end) | \(.value.via) |"' out.json
+          } > comment.md
+
+          # Keep a single comment per PR: edit ours if it exists.
+          existing=$(gh api "repos/$REPO/issues/$NUMBER/comments" --paginate \
+            --jq '[.[] | select(.body | startswith("<!-- dev-decide -->"))][0].id // empty')
+          if [ -n "$existing" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$existing" -F body=@comment.md >/dev/null
+          else
+            gh pr comment "$NUMBER" --repo "$REPO" --body-file comment.md
+          fi
+          if [ "$verdict" = "block" ]; then echo "::error::dev-decide gate says BLOCK"; exit 1; fi

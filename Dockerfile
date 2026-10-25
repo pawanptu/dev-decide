@@ -5,6 +5,9 @@ FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
     DEV_DECIDE_TRUST_PROXY=1
+# git and ssh only for statesync.py (keeping learned state in a private repository); nothing else is installed.
+RUN apt-get update && apt-get install -y --no-install-recommends git openssh-client \
+    && rm -rf /var/lib/apt/lists/*
 RUN useradd --create-home --uid 10001 app
 WORKDIR /app
 COPY --chown=app:app dev-decide-v5/skill/ skill/

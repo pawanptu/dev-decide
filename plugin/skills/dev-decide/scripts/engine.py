@@ -207,13 +207,20 @@ def _escalate(work, req, cat, ctx, flags, policy, root, llm_info):
         else {"keys": n, "backend": info.get("backend")}
 
 
-def decide(text=None, spec=None, cwd=None, extra_flags=(), use_cache=True):
+def decide(text=None, spec=None, cwd=None, extra_flags=(), use_cache=True, api_key=None, ephemeral=False):
+    """One decision. api_key: the caller's own Anthropic key, used for this request's model calls only (never
+    stored or logged). ephemeral: keep nothing about the request (no learning, cache, decision log or features),
+    as for public demo visitors."""
     t0 = time.perf_counter()
     cwd = str(cwd or os.getcwd())
     root = dd.project_root(cwd)
     dd.seed_policy(root)
     fastmodel.seed_models(root)  # only here: the routing hook must never write to a repository
     policy = dd.load_policy(root)
+    fastmodel.seed_optional(root, policy)  # e.g. the route model, when the example agents are installed
+    if ephemeral:
+        policy = dict(policy, learning=False, capture="off", log=False, escalate=False)
+        use_cache = False
     cat = dd.load_catalog(policy)
     req = request.parse_spec(spec, cat) if spec is not None else request.parse_text(text, cat)
     req.flags.update(extra_flags)
@@ -314,7 +321,8 @@ def decide(text=None, spec=None, cwd=None, extra_flags=(), use_cache=True):
         if L.enabled:
             ctx["precedents"] = L.precedents(work, req.questions)
             L.start_spot_checks(routes)
-        results, llm_info = llm.ask(work, req.questions, ctx, flags, policy, root)
+        llm_policy = dict(policy, _api_key=api_key) if api_key else policy  # never part of a cache key or log
+        results, llm_info = llm.ask(work, req.questions, ctx, flags, llm_policy, root)
         skipped = []
         for st in work:
             got = results.get(st.index, {})
@@ -326,7 +334,7 @@ def decide(text=None, spec=None, cwd=None, extra_flags=(), use_cache=True):
                 elif not llm_info.get("error"):
                     skipped.append(key if not batch else "%s/%s" % (st.item.id, key))
         if not llm_info.get("error"):
-            _escalate(work, req, cat, ctx, flags, policy, root, llm_info)
+            _escalate(work, req, cat, ctx, flags, llm_policy, root, llm_info)
         L.join_spot_checks()
         if llm_info.get("error"):
             warnings.append(llm_info["error"] + "; used local estimates where available")
