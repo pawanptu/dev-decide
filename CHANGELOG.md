@@ -43,5 +43,7 @@
 - Secrets written as `KEY=value` without quotes (as in `.env` files) were not detected; a diff too large to scan
   fully was reported as having no secrets.
 - A Claude Code plan or usage limit message was taken for a model answer (and cached by the kit).
+- A gate could block on rough local guesses alone; such rules now ask for review, while rules and models still block.
+- Reinstalling while the routing-hint server ran failed on Windows (a memory-mapped file); the installer now stops it first.
 - Gates passed on answers that were unsure; `.pyc` files were reviewed as part of a change; a `COMMIT -x` argument
   could be read as a git option; and the local API answered other websites when no token was set.
