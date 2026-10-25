@@ -103,6 +103,13 @@ python3 dev-decide-kit/kit.py export --data dev-decide-kit/pretrained --repo /pa
 `/dev-decide fix last issue_type=bug`, `/dev-decide status`. `dev-decide-v5/README.md` has the details
 ("5.0 measurements", "The learning loop"); `dev-decide-kit/README.md` covers training your own.
 
+## Contributing
+
+dev-decide is open source and contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md), the
+[Code of Conduct](CODE_OF_CONDUCT.md) and [SECURITY.md](SECURITY.md) (report vulnerabilities privately).
+
 ## Licence
 
-MIT. See `LICENSE`. The bundled meaning model (potion-base-8M) is MIT licensed too; see its `NOTICE`.
+MIT. See `LICENSE`. The starter models and the example data in `dev-decide-kit/pretrained/` are released under
+the same licence, so results can be reproduced with `python3 tools/benchmark.py`. The bundled meaning model
+(potion-base-8M) is MIT licensed too; see its `NOTICE`. Each user's own learned state stays private to them.
