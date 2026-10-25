@@ -1,8 +1,10 @@
-# dev-decide 5.1.0
+# dev-decide 5.2.0
 
 A Jev-style decision engine for software and AI work, packaged as a Claude Code skill plus a
 command-line tool, an opt-in routing hook and a small HTTP API. It decides locally in milliseconds
 when it can, asks Claude when it can't, and learns from every answer.
+
+**New in 5.2:** a decision graph of which agent or skill was suggested for which task, what Claude really used and how long each step took (a page at `http://127.0.0.1:47321/graph` and the `dev-decide-graph` side panel), a redesigned web console, and retrained `breaking_change` and route models. See `../CHANGELOG.md`.
 
 **New in 5.1:** a routing hint in about 5 ms, routing by meaning, example agents with their route model, a demo token and bring-your-own-key for the web page, learning that survives restarts, GitHub Actions and retrained models. See `../CHANGELOG.md`.
 

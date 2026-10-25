@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 5.2.0 (25 October 2026)
 
 ### Added
 - **Decision graph.** `http://127.0.0.1:47321/graph` shows, per kind of task (type · area), what decided (the

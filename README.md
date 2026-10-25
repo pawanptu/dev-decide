@@ -1,4 +1,4 @@
-# dev-decide 5.1 + dev-decide-kit
+# dev-decide 5.2 + dev-decide-kit
 
 dev-decide is a Jev-style decision engine for software and AI work: a Claude Code skill, a command-line tool,
 an HTTP API and an opt-in routing hook. It answers typed questions (route this request, triage this issue, rate
