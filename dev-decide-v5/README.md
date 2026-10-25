@@ -269,7 +269,17 @@ started by a session-start hook and reached through Claude Code's HTTP hook) sco
 about 5 ms; `--router-hook=command` runs it as a command per prompt instead (about 70 ms on Linux, 300 ms on
 Windows). Only when the match is clear, it adds one line of context, for example "this request most
 closely matches the skill `db-migrate` ... confidence 0.86". It never blocks a prompt or calls a model,
-and it stores nothing. Tune or disable it under `router_hook` in the policy file.
+and it writes nothing to your repository. Tune or disable it under `router_hook` in the policy file.
+
+**Decision graph.** The same server records what each hint decided (each step's answer, confidence and time, the
+task's type and area, and the first 40 characters of the prompt with keys and tokens masked), which agent or skill
+Claude then ran (a `PostToolUse` hook on the Agent and Skill tools) and every `/dev-decide` answer, in
+`~/.claude/dev-decide/traces/` on this machine only, for 30 days (`scripts/traces.py`). It draws them at
+`http://127.0.0.1:47321/graph`: a flow from task to decider to suggestion to what Claude used, totals, a replay of
+the latest request, leaderboards and a timeline. `/trace` returns the same as JSON and `/graph.svg` as an image,
+which the `dev-decide-graph` plugin shows as a side panel (`/dev-decide-graph`). Settings: `"decision_graph":
+{"enabled": true, "keep_days": 30, "prompt_chars": 40}`; `DEV_DECIDE_TRACE=0` turns it off, and `serve.py` turns it
+off when it listens beyond localhost.
 
 Without a trained route model, matching blends words (TF-IDF) with meaning (the bundled embedding model) and with
 technical areas (postgres, column and schema count as "database"; css and button as "frontend"), so a request can
@@ -386,7 +396,7 @@ See `examples/dev-decide.json`.
 - `presets`, `bundles`, `gates`: your own.
 - `backend`: `auto`, `cli`, `api`, `openai`, `gemini`, `command` or `none` (see "Other models" below).
 - `model`: for example `{"cli": "haiku", "api": "claude-haiku-5-5", "openai": "gpt-4.1-mini"}`.
-- `effort`, `capture`, `cache_ttl_hours`, `router_hook`, `log`.
+- `effort`, `capture`, `cache_ttl_hours`, `router_hook`, `decision_graph`, `log`.
 - `learning`: `enabled` (true), `target` (0.9), `auto_promote` (true; false waits for `promote <preset>`),
   `audit_rate` (0.05), `audits_per_day` (20), `keep_text` (true), `memory` (true), `memory_similarity` (0.80),
   `recent` (20), `recent_hours` (24), `audit_ttl_days` (7), `episodic` (true), `adapt` (true),

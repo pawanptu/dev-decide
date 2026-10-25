@@ -8,6 +8,7 @@ Thanks for helping. dev-decide is MIT licensed and open to contributions: code, 
 |---|---|
 | `dev-decide-v5/skill/` | The engine. This is the source of truth. |
 | `plugin/` | The Claude Code plugin. Its `skills/dev-decide/` is a copy of the engine, made by `tools/sync.py`. |
+| `plugin-graph/` | The `dev-decide-graph` side panel: a Claude Code plugin with a TypeScript hooks module. |
 | `dev-decide-kit/` | Optional kit: bootstraps labeled data and trains starting models. |
 | `tools/` | Smoke tests, the benchmark and evaluation scripts. |
 
@@ -34,7 +35,22 @@ python3 -m compileall -q dev-decide-v5/skill/scripts dev-decide-kit tools
 python3 tools/smoke.py
 python3 tools/sync.py           # if you changed the engine
 claude plugin validate plugin   # if you changed the plugin
+claude plugin validate plugin-graph && claude plugin test plugin-graph   # if you changed the side panel
 ```
+
+The side panel uses Claude Code's hooks modules, so validate and test it with Claude Code 2.1.310 or later; an older
+`claude` reports errors that are not there.
+
+## The web pages
+
+- **The web console** (`dev-decide-v5/skill/ui.html` and `ui.js`) runs on Alpine.js's CSP build, vendored in
+  `skill/vendor/` (see its README for the version and checksums). The page's CSP is `script-src 'self'`, so put
+  logic in `ui.js` (an `Alpine.data` component), never in an inline `<script>`. Templates can only read properties
+  and call methods: no arrow functions, template literals or globals such as `Math` or `JSON` in an attribute.
+- **The decision graph page** (`skill/graph.html`) is one self-contained file served by `hookd.py`. Its colors are
+  validated for color-blind readers in both themes; keep text in the ink colors, never a series color, and keep
+  every animation off under `prefers-reduced-motion`.
+- Check both at phone width (390 px) with no sideways scroll, and in light and dark.
 
 Please also:
 - Keep changes small and focused. One topic per pull request.

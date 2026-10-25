@@ -269,10 +269,20 @@ python3 ~/dev-decide-v5-kit/dev-decide-v5/install.py --router-hook
 python3 ~/dev-decide-v5-kit/dev-decide-v5/install.py --project --router-hook
 ```
 
-On each prompt, the hook scores your agents and skills locally (about 70 ms). When one clearly matches, it adds a
-one-line hint for Claude. It never blocks a prompt, never calls a model and stores nothing. It goes into
+On each prompt a small local server (`hookd.py`, started by a session-start hook and reached through Claude
+Code's HTTP hook) scores your agents and skills in about 5 ms. When one clearly matches, it adds a one-line hint
+for Claude. It never blocks a prompt and never calls a model. `--router-hook=command` runs the same check as a new
+process per prompt instead (about 70 ms), for older Claude Code versions. The hooks go into
 `~/.claude/settings.json`, or `.claude/settings.local.json` for a project install, and that file is backed up
 first. Restart Claude Code after installing it.
+
+The same server keeps the **decision graph**: for each prompt, what decided, which agent or skill it suggested, and
+(from a `PostToolUse` hook on the Agent and Skill tools) which one Claude really ran and for how long. Open
+`http://127.0.0.1:47321/graph` while Claude Code runs, or install the side panel with
+`/plugin install dev-decide-graph@dev-decide` and type `/dev-decide-graph` (Claude Code 2.1.310 or later). It is
+kept on your computer only, in `~/.claude/dev-decide/traces/`, for 30 days, with the first 40 characters of each
+prompt (keys and tokens masked). In `.claude/dev-decide.json`, `"decision_graph": {"prompt_chars": 0}` keeps no
+prompt text and `"decision_graph": {"enabled": false}` keeps nothing.
 
 ### Step 12. Update or uninstall
 

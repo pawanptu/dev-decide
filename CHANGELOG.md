@@ -16,6 +16,13 @@
   `X-Anthropic-Api-Key`. The key reaches only the endpoint and model the server is set up with; `/health` lists
   which providers' keys it takes (`own_keys`), and the web console has a provider picker.
 
+### Changed
+- Described as an open-source, Jev-style decision engine: the README compares it with Jev (TypeSafe AI's decision
+  model), and the plugin and marketplace listings, the GitHub topics and the web console say so, each with a note
+  that dev-decide is not affiliated with TypeSafe AI.
+- Documentation brought up to date for the decision graph and the side panel (`setup_deploy.md`, the engine
+  README, `SECURITY.md`, `CONTRIBUTING.md`) and the example settings file.
+
 ### Security
 - Where a key is sent (`openai.base_url`, `openai.key_env`, `gemini.base_url`) and which program runs (`command`)
   are read only from the environment or the personal `~/.claude/dev-decide.json`, never from a repository's
