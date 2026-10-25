@@ -4,6 +4,28 @@ dev-decide is a Jev-style decision engine for software and AI work: a Claude Cod
 an HTTP API and an opt-in routing hook. It answers typed questions (route this request, triage this issue, rate
 this diff) locally in milliseconds when it can, asks Claude when it can't, and learns from every answer.
 
+## A Jev-style decision engine, open source and on your machine
+
+[Jev](https://www.edenai.co/post/jev-a-new-kind-of-ai-model-built-for-decisions-not-conversation) (TypeSafe AI,
+early access since 15 September 2026) made a simple idea popular: an agent's decisions should come from a **decision
+model** that returns a typed answer with a confidence, not from a chatbot's prose, and your own code decides what to
+do with that confidence. dev-decide applies the same idea to software work, as a free, open-source engine you run
+yourself:
+
+| | Jev | dev-decide |
+|---|---|---|
+| Question types | Choice, Score, yes/no | `choose`, `score`, `verify` (yes/no with a probability) |
+| Answer | the typed value, probabilities, a confidence | the same, plus where it came from (rule, learned model, memory, Claude) |
+| Thresholds | in your code | in your code and in `.claude/dev-decide.json` gates (pass / review / block) |
+| Where it runs | TypeSafe's hosted service | your machine (Python standard library); Claude only for what stays unsure |
+| Speed | 70-500 ms reported, over the network | about 1 ms for a local answer ([measured](dev-decide-kit/README.md)) |
+| Learns from you | not described | yes: every answer Claude gives trains the local models, which switch only after proving better |
+| Built for | any closed question | software work: routing to agents and skills, triage, pull-request and deploy gates, AI-change checks |
+| Licence | proprietary | MIT |
+
+Jev is one general model; dev-decide's local tier is many narrow models, one per decision, so compare accuracy only
+on your own decisions. Jev is a decision model made by TypeSafe AI. dev-decide is an independent open-source project, not affiliated with or endorsed by TypeSafe AI.
+
 ## Install (as a Claude Code plugin)
 
 In Claude Code:

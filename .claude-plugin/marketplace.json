@@ -5,13 +5,13 @@
     "url": "https://github.com/pawanptu"
   },
   "metadata": {
-    "description": "dev-decide: typed, calibrated decisions for software and AI work"
+    "description": "dev-decide: an open-source, Jev-style decision engine for software and AI work"
   },
   "plugins": [
     {
       "name": "dev-decide",
       "source": "./plugin",
-      "description": "A decision engine for software and AI work: routes requests, triages issues, rates risk and gates pull requests. Answers locally in milliseconds when it can, asks Claude when it can't, and learns from every answer.",
+      "description": "A Jev-style decision engine, open source and local: routes requests, triages issues, rates risk and gates pull requests with typed, calibrated answers. Answers locally in milliseconds when it can, asks Claude when it can't, and learns from every answer.",
       "version": "5.2.0",
       "category": "development",
       "keywords": [
@@ -20,7 +20,13 @@
         "pull-request",
         "risk",
         "routing",
-        "gates"
+        "gates",
+        "jev",
+        "jev-alternative",
+        "decision-model",
+        "typed-decisions",
+        "ai-agents",
+        "agent-routing"
       ]
     },
     {
@@ -33,7 +39,9 @@
         "dev-decide",
         "routing",
         "graph",
-        "panel"
+        "panel",
+        "jev",
+        "decision-model"
       ]
     }
   ]

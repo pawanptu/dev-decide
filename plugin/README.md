@@ -1,6 +1,6 @@
 # dev-decide
 
-A decision engine for software and AI work. Instead of prose, it returns typed, calibrated decisions (a choice, a score or a probability, each with a confidence) that you or a script can branch on.
+A Jev-style decision engine for software and AI work, open source and running on your machine. Instead of prose, it returns typed, calibrated decisions (a choice, a score or a probability, each with a confidence) that you or a script can branch on.
 
 It decides locally in milliseconds when it can, asks Claude only when it can't, and learns from every answer.
 
@@ -68,4 +68,4 @@ Python 3.8+ (found as `python3`, `python` or `py -3`) and git. On Windows, Git B
 
 Full documentation, the HTTP API and the training kit are in the [main repository](https://github.com/pawanptu/dev-decide).
 
-MIT licensed.
+MIT licensed. Jev is a decision model made by TypeSafe AI. dev-decide is an independent open-source project, not affiliated with or endorsed by TypeSafe AI.
