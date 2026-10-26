@@ -29,6 +29,16 @@
   tools Claude used (names and counts only, from the transcript's tail). The decision graph's last column is now
   "Handled by": the agent or skill Claude ran, with the sub-task it gave it and how long it ran, or "Claude itself"
   with its tools and time. A new **Prompts** view lists each prompt, how it was routed and who handled it.
+- **Plan tree** for big requests: the steps of Claude's plan (from its to-do list, TodoWrite, or its task tools),
+  every agent and skill it ran, nested under the agent that launched it and placed under the step in progress when
+  it started, each with its sub-task, run time and its own tools, on a timeline where parallel agents overlap.
+  What happens for a prompt now links to it by Claude Code's `prompt_id`. New hooks: `SubagentStart`,
+  `TaskCreated`, `TaskCompleted`, and `PostToolUse` also for TodoWrite.
+- **dev-decide judges each sub-task.** For every agent Claude starts, it names the agent it would have picked
+  (the trained route model and the zero-shot match; its best guess, marked unsure, when nothing clears the hint's
+  bar) and counts how often it agrees with Claude, per agent. A sub-task's own words also teach the usage memory.
+  The judge is only as good as the route model: in a live test it would have sent "Find the README file" to
+  `docs-writer`, where Claude's `Explore` was right.
 - Prompts too short or too long to route ("go build it") are prompts in the graph too, so the agents Claude runs
   after them belong to them rather than to an earlier prompt.
 

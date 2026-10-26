@@ -214,7 +214,7 @@
          background:var(--surface-2); color:var(--ink-2); white-space:nowrap; max-width:100%; overflow:hidden; text-overflow:ellipsis; }
   .tag .dot { width:7px; height:7px; border-radius:50%; flex:none; }
   .ev .t { font-size:12px; color:var(--muted); white-space:nowrap; text-align:right; }
-  .wf { display:flex; height:6px; border-radius:3px; overflow:hidden; margin:9px 0 5px; max-width:420px; gap:2px; }
+  .wf { display:flex; height:6px; border-radius:3px; overflow:hidden; margin:9px 0 5px; max-width:100%; gap:2px; }
   .wf i { display:block; height:100%; border-radius:3px; min-width:4px; }
   .wf-l { display:flex; flex-wrap:wrap; gap:4px 12px; font-size:12px; color:var(--ink-2); }
   .wf-l span { display:inline-flex; align-items:center; gap:5px; }
@@ -237,6 +237,31 @@
   .pr-hint { margin-top:3px; }
   .pr-row .used { margin-top:0; }
   .pr-row .used .lbl2 { display:none; }
+  .jd { font-size:12px; } .jd-no { font-size:12px; color:var(--bad-ink); font-weight:600; }
+  .pt { display:grid; gap:2px; }
+  .pt-row { display:grid; grid-template-columns:minmax(0,46%) minmax(0,1fr); gap:14px; align-items:center; min-height:40px; border-radius:8px; }
+  .pt-row:hover { background:var(--surface-2); }
+  .pt-axis { min-height:22px; } .pt-axis:hover { background:none; }
+  .pt-lab { display:flex; align-items:center; gap:8px; min-width:0; }
+  .pt-branch { color:var(--line-2); font-size:14px; margin-left:-12px; }
+  .pt-ic { width:26px; height:26px; border-radius:8px; display:grid; place-items:center; color:#fff; flex:none; }
+  .pt-ic svg { width:14px; height:14px; }
+  .pt-tx { min-width:0; }
+  .pt-t1 { font-size:13.5px; display:flex; flex-wrap:wrap; gap:4px 6px; align-items:center; }
+  .pt-sub { font-size:12px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .pt-track { position:relative; height:24px; border-left:1px solid var(--line); border-right:1px solid var(--line); }
+  .pt-axis .pt-track { border:0; height:18px; }
+  .pt-tick { position:absolute; top:0; transform:translateX(-50%); font-size:11px; color:var(--muted); white-space:nowrap; }
+  .pt-tick:first-child { transform:none; } .pt-tick:last-child { transform:translateX(-100%); }
+  .pt-bar { position:absolute; top:6px; height:12px; border-radius:4px; background:var(--s4); min-width:4px; }
+  .pt-bar.pt-prompt { background:color-mix(in srgb,var(--s1) 35%,transparent); top:9px; height:6px; }
+  .pt-bar.pt-step { background:color-mix(in srgb,var(--s2) 45%,transparent); }
+  .pt-bar.running { background:repeating-linear-gradient(135deg,var(--s4) 0 6px,color-mix(in srgb,var(--s4) 55%,transparent) 6px 12px); background-size:17px 17px; animation:stripes 1s linear infinite; }
+  @keyframes stripes { to { background-position:17px 0; } }
+  .pt-dur { position:absolute; top:4px; font-size:11px; color:var(--ink-2); white-space:nowrap; }
+  .pt-foot { margin-top:10px; padding-top:10px; border-top:1px solid var(--line); font-size:13px; color:var(--ink-2); }
+  .pt-note { margin-top:6px; font-size:12px; color:var(--muted); }
+  @media (max-width:760px) { .pt-row { grid-template-columns:1fr; gap:2px; padding:4px 0; } .pt-axis { display:none; } }
   @media (max-width:760px) { .pr-row { grid-template-columns:1fr; gap:6px; } .pr-head { display:none; } }
 
   /* empty and error */
@@ -324,6 +349,20 @@
       <header><h2>Who did the work <small id="used-sub"></small></h2></header>
       <div class="body"><div class="bars" id="bars-used"></div></div>
     </article>
+  </section>
+
+  <section class="card" id="plan-card">
+    <header>
+      <h2>Plan tree <small>steps, agents and the agents they started, over time</small></h2>
+      <select id="plan-pick" class="select" aria-label="Which request" style="max-width:340px"></select>
+      <div class="legend">
+        <span><i class="sw" style="background:color-mix(in srgb,var(--s2) 45%,transparent)"></i>plan step</span>
+        <span><i class="sw" style="background:var(--s4)"></i>agent or skill</span>
+        <span><i class="mark good" id="mk-agree"></i>dev-decide agrees</span>
+        <span><i class="sw" style="background:var(--bad)"></i>dev-decide would pick another</span>
+      </div>
+    </header>
+    <div class="body" id="plan"></div>
   </section>
 
   <section class="card" id="flow-card">
@@ -495,7 +534,7 @@
       d.appendChild(ic); d.appendChild(el("b", "", s.title)); d.appendChild(el("span", "", text[i]));
       box.appendChild(d);
     });
-    $("mk-good").appendChild(icon("check")); $("mk-bad").appendChild(icon("cross"));
+    $("mk-good").appendChild(icon("check")); $("mk-bad").appendChild(icon("cross")); $("mk-agree").appendChild(icon("check"));
     var hidden = store.get("howto-hidden", false);
     $("howto").hidden = hidden;
     $("howto-x").onclick = function () { $("howto").hidden = true; store.set("howto-hidden", true); };
@@ -526,6 +565,7 @@
       t(x >= 2 ? ", about " + x + "× faster than a blink." : ".");
     }
     if (s.itself) { t(" Claude did the work itself, without an agent, for "); b(String(s.itself)); t(" of them."); }
+    if (s.judged) { t(" dev-decide agreed with Claude's choice of expert for "); b(s.agreed + " of " + s.judged); t(" sub-tasks."); }
     if (s.decisions) { t(" "); b(plural(s.decisions, "/dev-decide answer")); t(" too."); }
     if (!s.used && recent && recent.last_used_ts) t(" Claude ran no agent or skill in this period; its last run was " + ago(recent.last_used_ts) + ".");
   }
@@ -618,7 +658,11 @@
   }
   function renderBars(nodes, recent) {
     function col(c) { return nodes.filter(function (n) { return n.col === c; }); }
-    var used = col(3).map(function (n) { return { name: n.name.replace(/^used /, ""), count: n.count, sub: n.avg_ms != null ? "avg " + ms(n.avg_ms) : "" }; });
+    var judged = (S.data && S.data.summary.judge) || {};
+    var used = col(3).map(function (n) {
+      var nm = n.name.replace(/^used /, ""), j = judged[nm];
+      return { name: nm, count: n.count, sub: (n.avg_ms != null ? "avg " + ms(n.avg_ms) : "") + (j ? " · dev-decide agrees " + j[0] + "/" + j[1] : "") };
+    });
     bars($("bars-used"), used, { empty: "Claude has not run an agent or skill in this period. They appear here when it does." });
     if (!used.length && lastRunNote(recent)) { $("bars-used").textContent = ""; $("bars-used").appendChild(lastRunNote(recent)); }
     $("used-sub").textContent = used.length ? "how often, and how long each ran" : "";
@@ -960,6 +1004,7 @@
       us.appendChild(t);
       if (u.followed === true) us.appendChild(el("span", "ok-ink", "✓ followed"));
       if (u.followed === false) us.appendChild(el("span", "bad-ink", "✗ another one"));
+      var jb = judgeBadge(u.judge); if (jb) us.appendChild(jb);
     });
     if (!(it.used || []).length) {
       if (it.turn) {
@@ -998,6 +1043,100 @@
       r.appendChild(c1); r.appendChild(c2); r.appendChild(c3);
       box.appendChild(r);
     });
+  }
+
+  // ---------- plan tree: one request's steps and agents, nested, over time
+  function judgeBadge(j) {
+    if (!j || !j.agent) return null;
+    var b = el("span", j.agrees ? "ok-ink jd" : "jd-no", (j.agrees ? "≈ dev-decide agrees" : "dev-decide: " + j.agent) + (j.sure === false ? " (unsure)" : ""));
+    b.title = j.agrees ? "dev-decide would have picked the same expert (" + (j.by || "") + ")" :
+      "dev-decide would have picked " + j.agent + (j.confidence != null ? " (" + Math.round(j.confidence * 100) + "% sure, " + (j.by || "") + ")" : "");
+    return b;
+  }
+  function planLabel(it) {
+    var p = it.plan, n = p.uses.length, k = p.steps.length;
+    return ago(it.ts) + " · " + (it.text || "request") + " · " + (n ? plural(n, "agent") : "") + (n && k ? ", " : "") + (k ? plural(k, "step") : "");
+  }
+  function renderPlan(items) {
+    var box = $("plan"), sel = $("plan-pick");
+    var withPlan = items.filter(function (it) { return it.kind === "hint" && it.plan; });
+    box.textContent = ""; sel.textContent = "";
+    if (!withPlan.length) {
+      sel.hidden = true;
+      box.appendChild(el("div", "nodata", "No multi-step work in this period yet. When Claude splits a request into steps or hands parts to agents, the plan tree appears here."));
+      return;
+    }
+    sel.hidden = false;
+    withPlan.forEach(function (it) { var o = el("option", "", planLabel(it)); o.value = String(it.ts); sel.appendChild(o); });
+    var pick = withPlan.filter(function (it) { return String(it.ts) === S.planTs; })[0] || withPlan[0];
+    sel.value = String(pick.ts);
+    sel.onchange = function () { S.planTs = this.value; renderPlan(items); };
+    var p = pick.plan, span = Math.max(1, p.end - p.start);
+    function pct(t) { return Math.max(0, Math.min(100, 100 * (t - p.start) / span)); }
+    var grid = el("div", "pt");
+    var axis = el("div", "pt-row pt-axis"); axis.appendChild(el("div", "", ""));
+    var ax = el("div", "pt-track");
+    [0, 0.25, 0.5, 0.75, 1].forEach(function (f) { var t = el("span", "pt-tick", f ? "+" + ms(span * f) : "start"); t.style.left = (f * 100) + "%"; ax.appendChild(t); });
+    axis.appendChild(ax); grid.appendChild(axis);
+    function row(depth, iconName, color, title, sub, badges, start, end, cls, tip) {
+      var r = el("div", "pt-row " + (cls || ""));
+      var lab = el("div", "pt-lab"); lab.style.paddingLeft = (depth * 18) + "px";
+      if (depth) lab.appendChild(el("span", "pt-branch", "└"));
+      lab.appendChild(icbox("pt-ic", iconName, color));
+      var tx = el("div", "pt-tx"); var t1 = el("div", "pt-t1"); t1.appendChild(el("b", "", title));
+      (badges || []).forEach(function (b) { if (b) { t1.appendChild(document.createTextNode(" ")); t1.appendChild(b); } });
+      tx.appendChild(t1); if (sub) tx.appendChild(el("div", "pt-sub", sub));
+      lab.appendChild(tx); r.appendChild(lab);
+      var tr = el("div", "pt-track");
+      if (start != null) {
+        var bar = el("i", "pt-bar " + (cls || "")); var e2 = end == null ? Date.now() : end;
+        bar.style.left = pct(start) + "%"; bar.style.width = Math.max(0.8, pct(e2) - pct(start)) + "%";
+        if (end == null) bar.classList.add("running");
+        tr.appendChild(bar);
+        var lbl = el("span", "pt-dur", end == null ? "running" : ms(e2 - start)); lbl.style.left = Math.min(92, pct(e2) + 0.8) + "%"; tr.appendChild(lbl);
+        var tipf = function (ev) { showTip(ev, tip); };
+        r.addEventListener("mousemove", tipf); r.addEventListener("mouseleave", hideTip);
+      }
+      r.appendChild(tr); grid.appendChild(r);
+    }
+    var hintB = pick.hint ? el("span", "tag", "hint: " + pick.hint) : el("span", "tag", "no hint");
+    row(0, "chat", "var(--s1)", "“" + (pick.text || "request") + "”", promptTask(pick) + " · " + promptDecider(pick), [hintB], p.start, p.end, "pt-prompt",
+        function (t) { t.appendChild(el("div", "tv", ms(p.end - p.start))); t.appendChild(el("div", "tl", "The whole request")); });
+    function useRow(u, depth) {
+      var tools = toolsText(u.tools);
+      var badges = [u.followed === true ? el("span", "ok-ink", "✓ hint") : u.followed === false ? el("span", "bad-ink", "✗ not the hint") : null, judgeBadge(u.judge)];
+      var dur = u.ms != null ? ms(u.ms) : (u.running ? "running" : "time not recorded");
+      row(depth, u.tool === "Skill" ? "bolt" : "bot", "var(--s4)", u.name, (u.text ? "“" + u.text + "”" : (u.tool === "Skill" ? "skill" : "agent")) + (tools ? " · " + tools : ""),
+          badges, u.start, u.end, u.running ? "pt-use" : "pt-use", function (t) {
+            t.appendChild(el("div", "tv", dur)); t.appendChild(el("div", "tl", u.name + (u.text ? ": " + u.text : "")));
+            t.appendChild(el("div", "tm", "started +" + ms(u.start - p.start) + (tools ? " · " + tools : "")));
+            if (u.judge && u.judge.agent) t.appendChild(el("div", "tm", u.judge.agrees ? "dev-decide picks the same" : "dev-decide would pick " + u.judge.agent));
+          });
+      p.uses.filter(function (c) { return c.parent === u.key; }).forEach(function (c) { useRow(c, depth + 1); });
+    }
+    var top = p.uses.filter(function (u) { return u.parent == null; });
+    p.steps.forEach(function (st, i) {
+      var mine = top.filter(function (u) { return u.step === st.id; });
+      row(1, st.completed ? "check" : "clock", "var(--s2)", st.subject || ("Step " + (i + 1)),
+          (st.completed ? "done" : "in progress") + (st.teammate ? " · " + st.teammate : "") + (mine.length ? " · " + plural(mine.length, "agent") : ""),
+          [], st.started || st.created || st.completed, st.completed, "pt-step", function (t) {
+            var from = st.started || st.created;
+            t.appendChild(el("div", "tv", st.completed && from ? ms(st.completed - from) : st.completed ? "done" : "in progress"));
+            t.appendChild(el("div", "tl", st.subject || "a step of the plan"));
+          });
+      mine.forEach(function (u) { useRow(u, 2); });
+    });
+    var loose = top.filter(function (u) { return u.step == null; });
+    if (loose.length && p.steps.length) row(1, "bot", "var(--quiet)", "Other work", "agents not inside a step", [], null, null, "pt-step");
+    loose.forEach(function (u) { useRow(u, p.steps.length ? 2 : 1); });
+    if (pick.turn) {
+      var foot = el("div", "pt-foot");
+      foot.appendChild(el("b", "", ITSELF + ": "));
+      foot.appendChild(document.createTextNode((toolsText(pick.turn.tools) || "no tools") + " · reply took " + ms(pick.turn.ms)));
+      grid.appendChild(foot);
+    }
+    if (p.steps.length && p.uses.length) grid.appendChild(el("div", "pt-note", "Agents sit under the step that was in progress when they started; agents launched by an agent sit under it."));
+    box.appendChild(grid);
   }
 
   // ---------- timeline
@@ -1118,12 +1257,13 @@
         projects(data.projects || [], data.project);
         renderStory(data.summary.stats, data.summary.recent); renderTiles(data.summary.stats, data.summary.series, data.summary.recent);
         if (changed) {
-          renderFlow(data, first || opts.full); renderTable(data.summary); renderPrompts(data.summary.timeline || []); renderBars(data.summary.nodes || [], data.summary.recent);
+          renderFlow(data, first || opts.full); renderTable(data.summary); renderPrompts(data.summary.timeline || []); renderPlan(data.summary.timeline || []); renderBars(data.summary.nodes || [], data.summary.recent);
           var isNew = !first && !opts.full && latestKey && latestKey !== S.latestKey;
           if (first || opts.full || isNew) renderReplay(replayItem(tl), true);
           if (isNew) toast("New: " + (latest.text ? "“" + latest.text + "” " : "") + (latest.kind === "hint" ? (latest.hint ? "→ " + latest.hint : "→ no suggestion") : latest.kind === "used" ? "→ used " + latest.name : "→ /dev-decide"));
           renderTimeline(tl, !first && !opts.full);
         }
+        if (!changed) renderPlan(tl);  // a running agent's bar keeps growing between changes
         S.latestKey = latestKey;
         S.seen = new Set(tl.map(function (it) { return it.kind + ":" + it.ts; }));
         $("updated").textContent = (S.live ? "Live · updated " : "Updated ") + new Date().toLocaleTimeString();

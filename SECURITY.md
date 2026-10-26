@@ -40,7 +40,10 @@ You will get a reply within 7 days. We will tell you when it is fixed and, if yo
   which Claude ran an agent or skill, with that agent's name, in `~/.claude/dev-decide/traces/usage/`, never the
   prompt's text. `"router_hook": {"learn": false}` turns it off. For an agent's run time it reads only the first
   line's timestamp of the agent's transcript; at the end of each reply it reads the transcript's tail and keeps only
-  the reply's duration and the names and counts of the tools used, never their inputs or results.
+  the reply's duration and the names and counts of the tools used, never their inputs or results. Plan steps
+  (to-do items and tasks) keep their first 40 characters, like prompts. To judge a sub-task and teach the usage
+  memory it reads the sub-task Claude gave an agent in memory only; it keeps the first 40 characters of its short
+  description, never the prompt Claude wrote for the agent.
 - **The web console** loads only its own scripts (`script-src 'self'`: no inline script, no `eval`, no CDN), and a
   key typed into it is sent with that one request only, never stored.
 

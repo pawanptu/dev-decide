@@ -199,19 +199,27 @@ def _with_run_times(events):
     used = [dict(e) for e in events if e.get("kind") == "used"]
     for u in used:  # fixed before any run time replaces the call's own duration
         u["start"] = _start(u)
+    for st in sorted((e for e in events if e.get("kind") == "start"), key=lambda e: e.get("ts", 0)):
+        cands = [u for u in used if not u.get("child_id") and u.get("name") == st.get("name")
+                 and (u.get("session") or "") == (st.get("session") or "") and abs(u["start"] - st.get("ts", 0)) <= 60000]
+        if cands:
+            min(cands, key=lambda u: abs(u["start"] - st.get("ts", 0)))["child_id"] = st.get("agent_id")
     for r in sorted((e for e in events if e.get("kind") == "ran"), key=lambda e: e.get("ts", 0)):
         # the use that started when this agent started: a background launch is recorded at the start, a foreground
         # call (which waits for the agent) just after the end, with the run as its duration
         began = r.get("ts", 0) - int(r.get("ms") or 0)
-        cands = [u for u in used if not u.get("ran") and u.get("name") == r.get("name")
-                 and (u.get("session") or "") == (r.get("session") or "") and abs(u["start"] - began) <= 60000]
+        same = [u for u in used if not u.get("ran") and r.get("agent_id") and u.get("child_id") == r.get("agent_id")]
+        cands = same or [u for u in used if not u.get("ran") and u.get("name") == r.get("name") and not u.get("child_id")
+                         and (u.get("session") or "") == (r.get("session") or "") and abs(u["start"] - began) <= 60000]
         if cands:
             u = min(cands, key=lambda u: abs(u["start"] - began))
-            u["ms"], u["ran"] = r.get("ms"), True
+            u["ms"], u["ran"], u["tools"] = r.get("ms"), True, r.get("tools") or {}
+            u["child_id"] = u.get("child_id") or r.get("agent_id")
         else:  # an agent no PostToolUse reported (one started by another agent, say)
             began = r.get("ts", 0) - int(r.get("ms") or 0)
             used.append({"kind": "used", "tool": "Agent", "name": r.get("name"), "session": r.get("session"),
-                         "ts": began, "start": began, "ms": r.get("ms"), "ran": True})
+                         "prompt_id": r.get("prompt_id"), "ts": began, "start": began, "ms": r.get("ms"), "ran": True,
+                         "child_id": r.get("agent_id"), "tools": r.get("tools") or {}})
     for u in used:
         if u.get("tool") == "Agent" and not u.get("ran") and (u.get("ms") or 0) < 1000:
             u["ms"] = None  # the launch of a background agent, not how long it ran
@@ -250,6 +258,72 @@ def series(events, span_ms, now_ms):
     return out
 
 
+RUNNING_MAX_MS = 3 * 3600 * 1000  # an agent with no end after this long ended before run times were recorded
+
+
+def _plan(prompt, rows, tasks, turn):
+    """The tree of one prompt's work, for the Plan view: the steps of Claude's plan (its task list) and every agent or
+    skill it ran, nested under the agent that launched it, each top-level one under the step in progress when it
+    started; with start and end times for the timeline. None when the prompt had no steps and no agents."""
+    if not rows and not tasks:
+        return None
+    now = int(time.time() * 1000)
+    steps, order = {}, []
+    for k in sorted(tasks, key=lambda k: k.get("ts", 0)):
+        if k.get("kind") == "todos":  # a to-do snapshot: every step with its status at this moment
+            for i, item in enumerate(k.get("items") or []):
+                sid = "todo:%s" % (item.get("subject") or i)
+                st = steps.setdefault(sid, {"id": sid, "subject": item.get("subject"), "teammate": None, "created": k.get("ts"),
+                                            "started": None, "completed": None})
+                if sid not in order:
+                    order.append(sid)
+                if item.get("status") == "in_progress" and not st["started"]:
+                    st["started"] = k.get("ts")
+                if item.get("status") == "completed" and not st["completed"]:
+                    st["completed"] = k.get("ts")
+            continue
+        st = steps.setdefault(k.get("task_id"), {"id": k.get("task_id"), "subject": k.get("subject"),
+                                                 "teammate": k.get("teammate"), "created": None, "started": None,
+                                                 "completed": None})
+        if k.get("task_id") not in order:
+            order.append(k.get("task_id"))
+        st["subject"] = st["subject"] or k.get("subject")
+        st[k.get("event") or "created"] = k.get("ts")
+    steps = [steps[i] for i in order]
+    # a step's window: from when it started (to-do lists say), else from when the previous step was done (or it was
+    # created), to when it was done
+    done = sorted((st for st in steps if st["completed"]), key=lambda st: st["completed"])
+    windows, prev = [], prompt.get("ts", 0)
+    for st in done:
+        windows.append((st["started"] or max(prev, st["created"] or prev), st["completed"], st["id"]))
+        prev = st["completed"]
+    for st in steps:  # a step in progress now: from its start to now
+        if st["started"] and not st["completed"]:
+            windows.append((st["started"], now, st["id"]))
+    open_steps = [st for st in steps if not st["completed"]]
+    by_child = {u.get("child_id"): i for i, u in enumerate(rows) if u.get("child_id")}
+    out = []
+    for i, u in enumerate(rows):
+        start = int(u.get("start") or u.get("ts", 0))
+        ms = u.get("ms")
+        parent = by_child.get(u.get("caller")) if u.get("caller") else None
+        step = None
+        if parent is None:
+            step = next((w[2] for w in windows if w[0] - 1000 <= start <= w[1]), None)
+            if step is None and open_steps and start >= prev:
+                step = open_steps[0]["id"]
+        out.append({"key": i, "name": u.get("name"), "tool": u.get("tool"), "text": u.get("text"), "start": start,
+                    "end": start + int(ms) if ms is not None else None, "ms": ms, "running": ms is None and u.get("tool") != "Skill" and now - start < RUNNING_MAX_MS,
+                    "tools": u.get("tools") or {}, "judge": u.get("judge"), "followed": u.get("followed"),
+                    "parent": parent, "step": step})
+    ends = [x["end"] for x in out if x["end"]] + [st["completed"] for st in steps if st["completed"]]
+    if turn and turn.get("prompt_ts") is not None and turn.get("ms") is not None:
+        ends.append(int(turn["prompt_ts"]) + int(turn["ms"]))
+    if any(x["running"] for x in out) or any(not st["completed"] for st in steps):
+        ends.append(now)
+    return {"start": prompt.get("ts", 0), "end": max(ends + [prompt.get("ts", 0) + 1]), "steps": steps, "uses": out}
+
+
 def summary(events, span_ms=None, now_ms=None):
     """The graph (nodes in four columns and weighted edges), the timeline and totals, from a project's events, and
     with span_ms the activity over that period (BUCKETS slices ending now_ms, default now).
@@ -272,15 +346,29 @@ def summary(events, span_ms=None, now_ms=None):
     by_session = {}
     for h in prompts:
         by_session.setdefault(h.get("session") or "", []).append(h)
+    by_pid = {h["prompt_id"]: h for h in prompts if h.get("prompt_id")}
     turn_of = {}  # a prompt -> the end of Claude's reply to it (Stop hook): how long, which tools
     for t in (e for e in events if e.get("kind") == "turn"):
+        if t.get("prompt_id") in by_pid:
+            turn_of[id(by_pid[t["prompt_id"]])] = t
+            continue
         cands = [h for h in by_session.get(t.get("session") or "", [])
                  if abs(h.get("ts", 0) - int(t.get("prompt_ts") or 0)) <= 60000]
         if cands:
             turn_of[id(min(cands, key=lambda h: abs(h.get("ts", 0) - int(t.get("prompt_ts") or 0))))] = t
+    tasks_of = {}  # a prompt -> the steps of the plan Claude made for it (its task list, or its to-do list)
+    for k in (e for e in events if e.get("kind") == "task" or (e.get("kind") == "todos" and not e.get("agent_id"))):
+        h = by_pid.get(k.get("prompt_id"))
+        if h is None:
+            prior = [x for x in by_session.get(k.get("session") or "", []) if x.get("ts", 0) <= k.get("ts", 0)]
+            h = prior[-1] if prior else None
+        if h is not None:
+            tasks_of.setdefault(id(h), []).append(k)
     links, alone, follow = {}, [], {}
     for u in used:
         prior = [h for h in by_session.get(u.get("session") or "", []) if h.get("ts", 0) <= _start(u)]
+        if u.get("tool") != "typed" and u.get("prompt_id") in by_pid:
+            prior = [by_pid[u["prompt_id"]]]
         if u.get("tool") != "typed" and prior:
             h = prior[-1]
             if h.get("hint"):
@@ -360,7 +448,7 @@ def summary(events, span_ms=None, now_ms=None):
 
     def uses(rows):
         return [{"name": u.get("name"), "tool": u.get("tool"), "ms": u.get("ms"), "followed": u.get("followed"),
-                 "text": u.get("text")} for u in rows]
+                 "text": u.get("text"), "judge": u.get("judge")} for u in rows]
 
     timeline = []
     for e in sorted(prompts + decisions + alone, key=lambda e: -e.get("ts", 0))[:TIMELINE]:
@@ -373,6 +461,9 @@ def summary(events, span_ms=None, now_ms=None):
         turn = turn_of.get(id(e))
         if turn:
             item["turn"] = {"ms": turn.get("ms"), "tools": turn.get("tools") or {}}
+        plan = _plan(e, links.get(id(e), []), tasks_of.get(id(e), []), turn)
+        if plan:
+            item["plan"] = plan
         timeline.append(item)
     asked = [u for u in used if "followed" in u]
     out = {
@@ -395,6 +486,16 @@ def summary(events, span_ms=None, now_ms=None):
         },
     }
     out["follow"] = follow
+    judged = {}  # per agent Claude ran: [dev-decide picked the same, sub-tasks dev-decide had an opinion on]
+    for u in used:
+        j = u.get("judge") or {}
+        if j.get("agent"):
+            jj = judged.setdefault(u.get("name"), [0, 0])
+            jj[0] += bool(j.get("agrees"))
+            jj[1] += 1
+    out["judge"] = judged
+    out["stats"]["judged"] = sum(v[1] for v in judged.values())
+    out["stats"]["agreed"] = sum(v[0] for v in judged.values())
     if span_ms:
         out["series"] = series(events, span_ms, now_ms if now_ms is not None else int(time.time() * 1000))
     return out

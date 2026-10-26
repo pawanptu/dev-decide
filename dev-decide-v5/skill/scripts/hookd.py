@@ -8,6 +8,8 @@ Windows). This server keeps all of that loaded, so a hint takes a few millisecon
   PostToolUse       {"type": "http", "url": "http://127.0.0.1:47321/tool", "timeout": 2}   (matcher "Agent|Skill")
   SubagentStop      {"type": "http", "url": "http://127.0.0.1:47321/agent", "timeout": 2}
   Stop              {"type": "http", "url": "http://127.0.0.1:47321/turn", "timeout": 2}
+  SubagentStart     {"type": "http", "url": "http://127.0.0.1:47321/agent", "timeout": 2}
+  TaskCreated, TaskCompleted   {"type": "http", "url": "http://127.0.0.1:47321/task", "timeout": 2}
   SessionStart      {"type": "command", "command": "sh <scripts>/run.sh hookd.py --ensure"}
 
   hookd.py --ensure   start the server unless one with this code is already running (prints nothing)
@@ -227,7 +229,7 @@ def serve():
                 self._send(200, {"ok": True})
                 threading.Thread(target=httpd.shutdown, daemon=True).start()
                 return
-            if path not in ("/route", "/tool", "/agent", "/turn"):
+            if path not in ("/route", "/tool", "/agent", "/turn", "/task"):
                 return self._send(404, {"error": "not found"})
             out = ev = data = None
             try:
@@ -243,10 +245,14 @@ def serve():
                     if data.get("hook_event_name") == "Stop" and first_time(
                             {"session_id": "turn", "prompt": "%s %s" % (data.get("session_id"), int(time.time()))}):
                         later(hook_route.turn, data)
-                elif path == "/agent":
-                    if data.get("hook_event_name") == "SubagentStop" and first_time(
-                            {"session_id": "agent", "prompt": str(data.get("agent_id"))}):
-                        later(hook_route.ran, data)
+                elif path == "/agent":  # SubagentStart and SubagentStop: an agent's id, run time and tools
+                    event = data.get("hook_event_name")
+                    if event in ("SubagentStart", "SubagentStop") and first_time(
+                            {"session_id": "agent", "prompt": "%s %s" % (event, data.get("agent_id"))}):
+                        later(hook_route.started if event == "SubagentStart" else hook_route.ran, data)
+                elif path == "/task":  # TaskCreated and TaskCompleted: the steps of Claude's plan
+                    if first_time({"session_id": "task", "prompt": "%s %s" % (data.get("hook_event_name"), data.get("task_id"))}):
+                        later(hook_route.task, data)
                 elif first_time(data):
                     out, ev = hook_route.explain(data)
                     remember(data, ev)

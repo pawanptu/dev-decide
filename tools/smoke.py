@@ -340,6 +340,47 @@ def hint_learning():
           traces.path(repo).read_text(encoding="utf-8"), str(me))
     check("decision graph: a short prompt (\"go build it\") owns the agents Claude ran after it",
           [u["name"] for u in by_text.get("go build it", {}).get("used", [])] == ["general-purpose"], str(by_text.get("go build it")))
+    # a big request: plan steps, agents nested under the agent that launched them, dev-decide's own pick per sub-task
+    t0 = int(time.time() * 1000) - 600000
+    rec = lambda e: traces.record(repo, e)  # noqa: E731
+    rec({"kind": "hint", "session": "big", "prompt_id": "P1", "hint": "Plan", "decided_by": "zero-shot match", "ts": t0,
+         "text": "build the SaaS from plan.md"})
+    rec({"kind": "task", "event": "created", "task_id": "1", "subject": "Data model", "session": "big", "prompt_id": "P1", "ts": t0 + 1000})
+    rec({"kind": "task", "event": "created", "task_id": "2", "subject": "Backend", "session": "big", "prompt_id": "P1", "ts": t0 + 1100})
+    rec({"kind": "used", "session": "big", "prompt_id": "P1", "tool": "Agent", "name": "db-migrate", "ts": t0 + 5000, "ms": 40,
+         "text": "Write the schema", "judge": {"agent": "db-migrate", "agrees": True}})
+    rec({"kind": "start", "session": "big", "agent_id": "A1", "name": "db-migrate", "ts": t0 + 5000})
+    rec({"kind": "ran", "session": "big", "agent_id": "A1", "name": "db-migrate", "ms": 60000, "ts": t0 + 65000, "tools": {"Write": 3}})
+    rec({"kind": "task", "event": "completed", "task_id": "1", "session": "big", "prompt_id": "P1", "ts": t0 + 70000})
+    rec({"kind": "used", "session": "big", "prompt_id": "P1", "tool": "Agent", "name": "backend-reviewer", "ts": t0 + 80000,
+         "ms": 30, "text": "Build the billing API", "judge": {"agent": "debugger", "agrees": False}})
+    rec({"kind": "start", "session": "big", "agent_id": "A2", "name": "backend-reviewer", "ts": t0 + 80000})
+    rec({"kind": "used", "session": "big", "prompt_id": "inner", "tool": "Agent", "name": "test-writer", "ts": t0 + 90000, "ms": 20,
+         "caller": "A2", "text": "Tests for billing"})
+    plan = [t for t in traces.summary(traces.load(traces.slug(repo), 1))["timeline"] if t.get("text") == "build the SaaS from plan.md"][0]["plan"]
+    names = {u["name"]: u for u in plan["uses"]}
+    check("plan tree: steps from the task list, agents under the step in progress, nested under their launcher",
+          [st["subject"] for st in plan["steps"]] == ["Data model", "Backend"] and names["db-migrate"]["step"] == "1"
+          and names["backend-reviewer"]["step"] == "2" and names["test-writer"]["parent"] == names["backend-reviewer"]["key"]
+          and names["db-migrate"]["tools"] == {"Write": 3} and names["db-migrate"]["ms"] == 60000, str(plan)[:300])
+    summ2 = traces.summary(traces.load(traces.slug(repo), 1))
+    check("plan tree: dev-decide's pick per sub-task is counted", summ2["judge"].get("db-migrate") == [1, 1]
+          and summ2["judge"].get("backend-reviewer") == [0, 1], str(summ2["judge"]))
+    # a plan made with TodoWrite: snapshots give each step's start and end
+    rec({"kind": "hint", "session": "td", "prompt_id": "P2", "hint": None, "ts": t0, "text": "two step job"})
+    snap = lambda a, b: [{"subject": "Find the add function", "status": a}, {"subject": "Find the readme", "status": b}]  # noqa: E731
+    rec({"kind": "todos", "session": "td", "prompt_id": "P2", "items": snap("pending", "pending"), "ts": t0 + 1000})
+    rec({"kind": "todos", "session": "td", "prompt_id": "P2", "items": snap("in_progress", "pending"), "ts": t0 + 2000})
+    rec({"kind": "used", "session": "td", "prompt_id": "P2", "tool": "Agent", "name": "Explore", "ts": t0 + 12000, "ms": 9000})  # ends at ts
+    rec({"kind": "todos", "session": "td", "prompt_id": "P2", "items": snap("completed", "in_progress"), "ts": t0 + 13000})
+    rec({"kind": "used", "session": "td", "prompt_id": "P2", "tool": "Agent", "name": "Plan", "ts": t0 + 19000, "ms": 5000})
+    rec({"kind": "todos", "session": "td", "prompt_id": "P2", "items": snap("completed", "completed"), "ts": t0 + 20000})
+    tp = [t for t in traces.summary(traces.load(traces.slug(repo), 1))["timeline"] if t.get("text") == "two step job"][0]["plan"]
+    sid = {st["subject"]: st["id"] for st in tp["steps"]}
+    by = {u["name"]: u["step"] for u in tp["uses"]}
+    check("plan tree: TodoWrite steps, each agent under the step that was in progress",
+          by.get("Explore") == sid.get("Find the add function") and by.get("Plan") == sid.get("Find the readme")
+          and all(st["completed"] for st in tp["steps"]), str(tp)[:300])
     # a hint Claude keeps ignoring needs 0.9
     sid = "s-strict"
     for i in range(6):

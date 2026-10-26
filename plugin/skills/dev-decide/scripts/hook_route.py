@@ -83,6 +83,78 @@ def _route_registry(root, routes):
     return fastmodel.optional_registry(names) or reg, "trained model"
 
 
+def _decide(text, routes, root, policy, cfg, memory=True):
+    """Which agent or skill fits `text`: (best (name, confidence) or None, what decided, the steps tried, silent),
+    where silent means the trained model said no agent or skill fits. memory: ask the usage memory first (what Claude
+    ran after similar requests); a sub-task is judged without it, since it would only repeat Claude's own choices."""
+    import router
+    names = set(r["name"] for r in routes)
+    min_conf = float(cfg.get("min_confidence", 0.6))
+    min_margin = float(cfg.get("min_margin", 0.2))
+    steps = []
+    best = decided = None
+    if memory:
+        try:  # 1. what Claude ran after prompts like this one, in this project
+            import usage
+            if usage.enabled(policy) and usage.path(root).exists():
+                s0 = time.perf_counter()
+                m = router._meaning_model()
+                hit = usage.suggest(root, m.encode(text), names) if m is not None else None
+                step = {"step": "your past sessions", "result": "no similar requests yet"}
+                if hit:
+                    best, decided = (hit[0], hit[1]), "your past sessions"
+                    step.update(answer=hit[0], confidence=hit[1], result="suggested (%d similar requests)" % hit[2])
+                step["ms"] = _ms(s0)
+                steps.append(step)
+        except Exception:
+            best = decided = None
+    if best is None:
+        try:  # 2. the trained route model, when enabled and confident
+            reg, label = _route_registry(root, routes)
+            if reg.enabled("route"):
+                s0 = time.perf_counter()
+                import fastmodel
+                import inputs  # imported only when needed: the analyzers compile many patterns
+                import signals
+                item = inputs.Item(None)
+                item.kind, item.text = "text", text
+                F, _ = signals.analyze(item, [])
+                ans = reg.answer("route", "choose", fastmodel.Features(item, F))
+                step = {"step": label, "result": "not sure enough"}
+                if ans:
+                    probs = ans["probs"]
+                    top = max((k for k in probs if k != "_rest"), key=probs.get, default=None)
+                    step.update(answer=top, confidence=round(probs[top], 3) if top else None)
+                    # an agent or skill the model has never seen may fit better: let the zero-shot match decide
+                    import learn
+                    zs = router.route(text, routes)
+                    if zs and learn.unknown_option_hint(reg, "route", _Hint(zs[0])):
+                        ans = None
+                        step["result"] = "a newer agent or skill may fit: asked the zero-shot match"
+                if ans:
+                    if top is None or top == "none" or probs[top] < min_conf:
+                        step.update(result="no agent or skill fits" if top in (None, "none") else "below min confidence",
+                                    ms=_ms(s0))
+                        steps.append(step)
+                        return None, label, steps, True
+                    best, decided = (top, probs[top]), label
+                    step["result"] = "suggested"
+                step["ms"] = _ms(s0)
+                steps.append(step)
+        except Exception:
+            best = decided = None
+    if best is None:  # 3. zero-shot: names and descriptions, by meaning and by area
+        s0 = time.perf_counter()
+        best = router.best_route(text, routes, min_confidence=min_conf, min_margin=min_margin)
+        step = {"step": "zero-shot match", "result": "suggested" if best else "no clear match"}
+        if best:
+            step.update(answer=best[0], confidence=round(best[1], 3))
+            decided = "zero-shot match"
+        step["ms"] = _ms(s0)
+        steps.append(step)
+    return best, decided, steps, False
+
+
 def explain(data):
     """(the hook's JSON output for one prompt or None to stay silent, the trace event or None). The event holds
     no prompt text; note() adds the task's labels and stores it. Shared with hookd.py."""
@@ -92,13 +164,13 @@ def explain(data):
     if not prompt:
         return None, None
     import ddcore as dd
-    import router
     import traces
 
     root = dd.project_root(data.get("cwd") or None)
     policy = dd.load_policy(root)
     is_auto = automated(raw)
     ev = {"kind": "hint", "ts": int(time.time() * 1000), "session": data.get("session_id") or None,
+          "prompt_id": data.get("prompt_id") or None,
           "text": None if is_auto else traces.preview(prompt, traces.prompt_chars(policy)), "root": str(root),
           "keep_days": traces.keep_days(policy)} if traces.enabled(policy) else None
 
@@ -125,71 +197,9 @@ def explain(data):
     routes = dd.discover_routes(root, policy, include_builtins=bool(cfg.get("builtins", True)))
     if not routes:
         return done(None, skipped="no agents or skills")
-    names = set(r["name"] for r in routes)
-    min_conf = float(cfg.get("min_confidence", 0.6))
-    min_margin = float(cfg.get("min_margin", 0.2))
-
-    steps = []
-    best = decided = None
-    try:  # 1. what Claude ran after prompts like this one, in this project
-        import usage
-        if usage.enabled(policy) and usage.path(root).exists():
-            s0 = time.perf_counter()
-            m = router._meaning_model()
-            hit = usage.suggest(root, m.encode(prompt), names) if m is not None else None
-            step = {"step": "your past sessions", "result": "no similar requests yet"}
-            if hit:
-                best, decided = (hit[0], hit[1]), "your past sessions"
-                step.update(answer=hit[0], confidence=hit[1], result="suggested (%d similar requests)" % hit[2])
-            step["ms"] = _ms(s0)
-            steps.append(step)
-    except Exception:
-        best = decided = None
-    if best is None:
-        try:  # 2. the trained route model, when enabled and confident
-            reg, label = _route_registry(root, routes)
-            if reg.enabled("route"):
-                s0 = time.perf_counter()
-                import fastmodel
-                import inputs  # imported only when needed: the analyzers compile many patterns
-                import signals
-                item = inputs.Item(None)
-                item.kind, item.text = "text", prompt
-                F, _ = signals.analyze(item, [])
-                ans = reg.answer("route", "choose", fastmodel.Features(item, F))
-                step = {"step": label, "result": "not sure enough"}
-                if ans:
-                    probs = ans["probs"]
-                    top = max((k for k in probs if k != "_rest"), key=probs.get, default=None)
-                    step.update(answer=top, confidence=round(probs[top], 3) if top else None)
-                    # an agent or skill the model has never seen may fit better: let the zero-shot match decide
-                    import learn
-                    zs = router.route(prompt, routes)
-                    if zs and learn.unknown_option_hint(reg, "route", _Hint(zs[0])):
-                        ans = None
-                        step["result"] = "a newer agent or skill may fit: asked the zero-shot match"
-                if ans:
-                    if top is None or top == "none" or probs[top] < min_conf:
-                        step.update(result="no agent or skill fits" if top in (None, "none") else "below min confidence",
-                                    ms=_ms(s0))
-                        steps.append(step)
-                        # the trained model says no agent or skill fits these words: no hint at all
-                        return done(None, steps=steps, decided_by=label, hint=None, options=len(routes))
-                    best, decided = (top, probs[top]), label
-                    step["result"] = "suggested"
-                step["ms"] = _ms(s0)
-                steps.append(step)
-        except Exception:
-            best = decided = None
-    if best is None:  # 3. zero-shot: names and descriptions, by meaning and by area
-        s0 = time.perf_counter()
-        best = router.best_route(prompt, routes, min_confidence=min_conf, min_margin=min_margin)
-        step = {"step": "zero-shot match", "result": "suggested" if best else "no clear match"}
-        if best:
-            step.update(answer=best[0], confidence=round(best[1], 3))
-            decided = "zero-shot match"
-        step["ms"] = _ms(s0)
-        steps.append(step)
+    best, decided, steps, silent = _decide(prompt, routes, root, policy, cfg, memory=True)
+    if silent:  # the trained model says no agent or skill fits these words: no hint at all
+        return done(None, steps=steps, decided_by=decided, hint=None, options=len(routes))
     if best and decided != "your past sessions":  # a hint Claude keeps ignoring here must be very sure
         st = traces.follow_stats(root).get(best[0]) if traces.enabled(policy) else None
         if st and st[1] >= STRICT_AFTER and st[0] < STRICT_BELOW * st[1] and best[1] < STRICT_CONFIDENCE:
@@ -255,6 +265,8 @@ def used(data):
     agent type or skill name, how long the call took (for a background agent only its launch; SubagentStop gives the
     run), and for an agent the start of its short task description (never the prompt Claude gave it, nor any
     result)."""
+    if data.get("tool_name") == "TodoWrite":
+        return todos(data)
     tool, name, tin = _used_name(data)
     if not name:
         return
@@ -266,11 +278,89 @@ def used(data):
     if not traces.enabled(policy):
         return
     ms = data.get("duration_ms")
-    ev = {"kind": "used", "session": data.get("session_id") or None, "tool": tool, "name": name,
-          "ms": ms if isinstance(ms, (int, float)) else None}
+    ev = {"kind": "used", "session": data.get("session_id") or None, "prompt_id": data.get("prompt_id") or None,
+          "tool": tool, "name": name, "ms": ms if isinstance(ms, (int, float)) else None,
+          "tool_use_id": data.get("tool_use_id") or None,
+          # inside an agent, the hook says which one: that agent launched this one (the tree's parent)
+          "caller": data.get("agent_id") or None, "caller_type": data.get("agent_type") or None}
     if tool != "Skill":
         ev["text"] = traces.preview(tin.get("description"), traces.prompt_chars(policy))
+        task = subtask_text(tin)
+        if task:
+            try:
+                ev["judge"] = judge(root, policy, task, name)
+            except Exception:
+                pass
+            learn_subtask(root, policy, task, name)
     traces.record(root, ev, traces.keep_days(policy))
+
+
+def todos(data):
+    """A PostToolUse hook input for TodoWrite -> a snapshot of Claude's plan: each step's subject (as much as a
+    prompt keeps) and status. Successive snapshots give when each step started and finished."""
+    import ddcore as dd
+    import traces
+
+    tin = data.get("tool_input") if isinstance(data.get("tool_input"), dict) else {}
+    items = tin.get("todos")
+    if not isinstance(items, list):
+        return
+    root = dd.project_root(data.get("cwd") or None)
+    policy = dd.load_policy(root)
+    if not traces.enabled(policy):
+        return
+    n = max(traces.prompt_chars(policy), 0)
+    steps = [{"subject": traces.preview(str(t.get("content") or t.get("subject") or ""), n), "status": str(t.get("status") or "")[:20]}
+             for t in items[:40] if isinstance(t, dict)]
+    traces.record(root, {"kind": "todos", "session": data.get("session_id") or None, "prompt_id": data.get("prompt_id") or None,
+                         "agent_id": data.get("agent_id") or None, "items": steps}, traces.keep_days(policy))
+
+
+def subtask_text(tin):
+    """The words of a sub-task Claude gave an agent: its short description and the start of its prompt. Used here,
+    in memory, to judge and to learn; never stored."""
+    parts = [str(tin.get(k) or "").strip() for k in ("description", "prompt")]
+    return ". ".join(p for p in parts if p)[:1500]
+
+
+def judge(root, policy, text, used_name):
+    """dev-decide's own pick for a sub-task Claude delegated, beside Claude's: {"agent", "confidence", "by", "agrees"}.
+    It asks the trained route model and the zero-shot match, not the usage memory (that would repeat Claude's own
+    choices); "agent" is None when no agent clearly fits."""
+    import ddcore as dd
+    cfg = policy.get("router_hook") or {}
+    routes = dd.discover_routes(root, policy, include_builtins=bool(cfg.get("builtins", True)))
+    if not routes:
+        return None
+    best, decided, _, _ = _decide(text, routes, root, policy, cfg, memory=False)
+    sure = bool(best)
+    if not best:  # below the hint's bar: still dev-decide's best guess, marked unsure (a judge interrupts nobody)
+        import router
+        ranked = router.route(text, routes)
+        probs = {k: v for k, v in (ranked[0] if ranked else {}).items() if k not in ("none", "_rest")}
+        if not probs:
+            return {"agent": None, "by": decided or "no clear match"}
+        top = max(probs, key=probs.get)
+        best, decided = (top, probs[top]), "zero-shot best guess"
+    return {"agent": best[0], "confidence": round(best[1], 3), "by": decided, "agrees": best[0] == used_name,
+            "sure": sure}
+
+
+def learn_subtask(root, policy, text, name):
+    """A sub-task's own words are close to an agent's job description: teach the usage memory that they led to it."""
+    try:
+        import ddcore as dd
+        import router
+        import usage
+        if not usage.enabled(policy):
+            return
+        cfg = policy.get("router_hook") or {}
+        names = set(r["name"] for r in dd.discover_routes(root, policy, include_builtins=bool(cfg.get("builtins", True))))
+        m = router._meaning_model()
+        if name in names and m is not None:
+            usage.record(root, m.encode(text), name)
+    except Exception:
+        pass
 
 
 def learn_use(data, prompt, hinted_at):
@@ -312,15 +402,53 @@ def ran(data):
     policy = dd.load_policy(root)
     if not traces.enabled(policy):
         return
-    ms = None
+    ms, tools = None, {}
     try:
         with open(str(data.get("agent_transcript_path") or ""), encoding="utf-8") as fh:
             first = json.loads(fh.readline())
         ms = max(0, int(time.time() * 1000 - _iso_ms(first["timestamp"])))
+        tools = _tools_after(str(data.get("agent_transcript_path")), 0)
     except Exception:
         pass
-    traces.record(root, {"kind": "ran", "session": data.get("session_id") or None, "name": name.strip()[:80],
-                         "ms": ms}, traces.keep_days(policy))
+    traces.record(root, {"kind": "ran", "session": data.get("session_id") or None, "agent_id": data.get("agent_id") or None,
+                         "prompt_id": data.get("prompt_id") or None, "name": name.strip()[:80], "ms": ms, "tools": tools},
+                  traces.keep_days(policy))
+
+
+def started(data):
+    """A SubagentStart hook input -> the agent's id as it starts, so the agents it launches nest under it while a long
+    build is still running."""
+    name = data.get("agent_type")
+    if not isinstance(name, str) or not name.strip() or not data.get("agent_id"):
+        return
+    import ddcore as dd
+    import traces
+
+    root = dd.project_root(data.get("cwd") or None)
+    policy = dd.load_policy(root)
+    if traces.enabled(policy):
+        traces.record(root, {"kind": "start", "session": data.get("session_id") or None, "agent_id": data["agent_id"],
+                             "prompt_id": data.get("prompt_id") or None, "name": name.strip()[:80]},
+                      traces.keep_days(policy))
+
+
+def task(data):
+    """A TaskCreated or TaskCompleted hook input -> a step of Claude's plan (its task list): its id, the start of its
+    subject (as much as a prompt keeps), and when it was created or done."""
+    event = data.get("hook_event_name")
+    if event not in ("TaskCreated", "TaskCompleted") or not data.get("task_id"):
+        return
+    import ddcore as dd
+    import traces
+
+    root = dd.project_root(data.get("cwd") or None)
+    policy = dd.load_policy(root)
+    if traces.enabled(policy):
+        traces.record(root, {"kind": "task", "event": "created" if event == "TaskCreated" else "completed",
+                             "task_id": str(data["task_id"])[:80], "session": data.get("session_id") or None,
+                             "prompt_id": data.get("prompt_id") or None, "agent_id": data.get("agent_id") or None,
+                             "subject": traces.preview(data.get("task_subject"), max(traces.prompt_chars(policy), 0)),
+                             "teammate": data.get("teammate_name") or None}, traces.keep_days(policy))
 
 
 TAIL_BYTES = 4 << 20  # the end of a transcript is enough to find the latest prompt and the reply to it
@@ -345,7 +473,6 @@ def turn(data):
     views join it to its prompt, so a prompt no agent handled shows "Claude itself" and what it did."""
     import ddcore as dd
     import traces
-    from collections import Counter
 
     root = dd.project_root(data.get("cwd") or None)
     policy = dd.load_policy(root)
@@ -374,15 +501,37 @@ def turn(data):
         began = _iso_ms(rows[start]["timestamp"])
     except (KeyError, ValueError):
         return
+    traces.record(root, {"kind": "turn", "session": data.get("session_id") or None,
+                         "prompt_id": rows[start].get("promptId") or data.get("prompt_id") or None, "prompt_ts": int(began),
+                         "ms": max(0, int(time.time() * 1000 - began)), "tools": _count_tools(rows[start + 1:])},
+                  traces.keep_days(policy))
+
+
+def _count_tools(rows):
+    from collections import Counter
     tools = Counter()
-    for r in rows[start + 1:]:
+    for r in rows:
         if r.get("type") == "assistant":
             for b in (r.get("message") or {}).get("content") or []:
                 if isinstance(b, dict) and b.get("type") == "tool_use" and isinstance(b.get("name"), str):
                     tools[b["name"][:60]] += 1
-    traces.record(root, {"kind": "turn", "session": data.get("session_id") or None, "prompt_ts": int(began),
-                         "ms": max(0, int(time.time() * 1000 - began)), "tools": dict(tools.most_common(20))},
-                  traces.keep_days(policy))
+    return dict(tools.most_common(20))
+
+
+def _tools_after(path, start):
+    """Tool names and counts in a transcript's tail (an agent's whole transcript, usually)."""
+    with open(path, "rb") as fh:
+        fh.seek(0, 2)
+        size = fh.tell()
+        fh.seek(max(0, size - TAIL_BYTES))
+        lines = fh.read().decode("utf-8", "replace").splitlines()
+    rows = []
+    for line in lines[1:] if size > TAIL_BYTES else lines:
+        try:
+            rows.append(json.loads(line))
+        except ValueError:
+            pass
+    return _count_tools(rows[start:])
 
 
 def main():
@@ -399,6 +548,10 @@ def main():
         return used(data)
     if event == "SubagentStop":
         return ran(data)
+    if event == "SubagentStart":
+        return started(data)
+    if event in ("TaskCreated", "TaskCompleted"):
+        return task(data)
     if event == "Stop":
         return turn(data)
     out, ev = explain(data)

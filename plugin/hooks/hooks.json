@@ -24,7 +24,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "Agent|Skill",
+        "matcher": "Agent|Skill|TodoWrite",
         "hooks": [
           {
             "type": "http",
@@ -51,6 +51,39 @@
           {
             "type": "http",
             "url": "http://127.0.0.1:47321/turn",
+            "timeout": 2
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://127.0.0.1:47321/agent",
+            "timeout": 2
+          }
+        ]
+      }
+    ],
+    "TaskCreated": [
+      {
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://127.0.0.1:47321/task",
+            "timeout": 2
+          }
+        ]
+      }
+    ],
+    "TaskCompleted": [
+      {
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://127.0.0.1:47321/task",
             "timeout": 2
           }
         ]

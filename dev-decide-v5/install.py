@@ -18,9 +18,10 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 SRC = HERE / "skill"
-HOOK_MARKS = ("hook_route.py", "hookd.py", ":47321/route", ":47321/tool", ":47321/agent", ":47321/turn")  # every form of the routing hint, old and new
-HOOK_EVENTS = ("UserPromptSubmit", "SessionStart", "PostToolUse", "SubagentStop", "Stop")
-USED_TOOLS = "Agent|Skill"  # what Claude really used, for the decision graph
+HOOK_MARKS = ("hook_route.py", "hookd.py", ":47321/route", ":47321/tool", ":47321/agent", ":47321/turn", ":47321/task")  # every form of the routing hint, old and new
+HOOK_EVENTS = ("UserPromptSubmit", "SessionStart", "PostToolUse", "SubagentStart", "SubagentStop", "Stop", "TaskCreated",
+               "TaskCompleted")
+USED_TOOLS = "Agent|Skill|TodoWrite"  # what Claude really used, for the decision graph
 HOOK_PORT = 47321
 
 
@@ -160,7 +161,8 @@ def main():
             hooks.setdefault("PostToolUse", []).append(
                 {"matcher": USED_TOOLS, "hooks": [{"type": "command", "command": cmd, "timeout": 5}]})
             hooks.setdefault("SubagentStop", []).append({"hooks": [{"type": "command", "command": cmd, "timeout": 5}]})
-            hooks.setdefault("Stop", []).append({"hooks": [{"type": "command", "command": cmd, "timeout": 5}]})
+            for event in ("Stop", "SubagentStart", "TaskCreated", "TaskCompleted"):
+                hooks.setdefault(event, []).append({"hooks": [{"type": "command", "command": cmd, "timeout": 5}]})
         else:  # a local server answers in milliseconds; each session start makes sure it runs
             cmd = '%s "%s" --ensure' % (py, (scripts / "hookd.py").as_posix())
             hooks.setdefault("SessionStart", []).append({"hooks": [{"type": "command", "command": cmd, "timeout": 10}]})
@@ -173,6 +175,11 @@ def main():
                 {"hooks": [{"type": "http", "url": "http://127.0.0.1:%d/agent" % HOOK_PORT, "timeout": 2}]})
             hooks.setdefault("Stop", []).append(  # the end of each reply: who did the work, and how long it took
                 {"hooks": [{"type": "http", "url": "http://127.0.0.1:%d/turn" % HOOK_PORT, "timeout": 2}]})
+            hooks.setdefault("SubagentStart", []).append(  # an agent's id as it starts: the plan tree nests under it
+                {"hooks": [{"type": "http", "url": "http://127.0.0.1:%d/agent" % HOOK_PORT, "timeout": 2}]})
+            for event in ("TaskCreated", "TaskCompleted"):  # the steps of Claude's plan (its task list)
+                hooks.setdefault(event, []).append(
+                    {"hooks": [{"type": "http", "url": "http://127.0.0.1:%d/task" % HOOK_PORT, "timeout": 2}]})
         save_settings(sfile, data)
         print("added the router hook (%s) to %s" % (args.router_hook, sfile))
         if args.router_hook == "http":
