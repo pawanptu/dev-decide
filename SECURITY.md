@@ -39,7 +39,8 @@ You will get a reply within 7 days. We will tell you when it is fixed and, if yo
 - **The routing hint's usage memory** keeps, per project, the meaning vector (256 numbers) of each prompt after
   which Claude ran an agent or skill, with that agent's name, in `~/.claude/dev-decide/traces/usage/`, never the
   prompt's text. `"router_hook": {"learn": false}` turns it off. For an agent's run time it reads only the first
-  line's timestamp of the agent's transcript.
+  line's timestamp of the agent's transcript; at the end of each reply it reads the transcript's tail and keeps only
+  the reply's duration and the names and counts of the tools used, never their inputs or results.
 - **The web console** loads only its own scripts (`script-src 'self'`: no inline script, no `eval`, no CDN), and a
   key typed into it is sent with that one request only, never stored.
 

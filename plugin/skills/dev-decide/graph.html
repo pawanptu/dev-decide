@@ -224,6 +224,20 @@
   .gate { font-weight:700; letter-spacing:.03em; font-size:11.5px; padding:2px 8px; border-radius:6px; color:#fff; }
   .gate.pass { background:var(--good); } .gate.review { background:#b7791f; } .gate.block { background:var(--bad); }
   .more { display:block; margin:6px auto 14px; }
+  .used .lbl2 { font-size:11.5px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); font-weight:650; margin-right:2px; }
+  .used .tag { max-width:none; white-space:normal; }
+  .sub { color:var(--muted); font-style:italic; }
+  .pr-row { display:grid; grid-template-columns:minmax(0,1.1fr) minmax(0,.8fr) minmax(0,1.6fr); gap:14px; padding:12px 0; border-top:1px solid var(--line); align-items:start; }
+  .pr-row:first-child { border-top:0; }
+  .pr-head { font-size:12px; color:var(--muted); font-weight:650; padding-top:0; }
+  .pr-row .q { font-style:italic; margin:2px 0 6px; overflow-wrap:anywhere; }
+  .pr-row .q::before { content:"\201C"; } .pr-row .q::after { content:"\201D"; }
+  .pr-when { font-size:12px; color:var(--muted); }
+  .pr-dec { font-size:13px; color:var(--ink-2); }
+  .pr-hint { margin-top:3px; }
+  .pr-row .used { margin-top:0; }
+  .pr-row .used .lbl2 { display:none; }
+  @media (max-width:760px) { .pr-row { grid-template-columns:1fr; gap:6px; } .pr-head { display:none; } }
 
   /* empty and error */
   .empty { text-align:center; padding:34px 16px 30px; }
@@ -307,7 +321,7 @@
       <div class="body"><ol class="rp-steps" id="rp"></ol></div>
     </article>
     <article class="card">
-      <header><h2>Agents &amp; skills Claude used <small id="used-sub"></small></h2></header>
+      <header><h2>Who did the work <small id="used-sub"></small></h2></header>
       <div class="body"><div class="bars" id="bars-used"></div></div>
     </article>
   </section>
@@ -318,10 +332,12 @@
       <div class="legend" id="flow-legend"></div>
       <div class="seg" id="view" role="group" aria-label="View">
         <button type="button" data-v="graph" aria-pressed="true">Graph</button>
+        <button type="button" data-v="prompts" aria-pressed="false">Prompts</button>
         <button type="button" data-v="table" aria-pressed="false">Table</button>
       </div>
     </header>
     <div id="flow" role="img" aria-label="Decision graph"></div>
+    <div id="prompts" class="body" hidden></div>
     <div id="table" class="body" hidden></div>
   </section>
 
@@ -370,9 +386,12 @@
     { title: "Task", q: "What kind of task?", color: "var(--s1)", icon: "chat" },
     { title: "Decided by", q: "Who chose?", color: "var(--s2)", icon: "compass" },
     { title: "Suggested", q: "What was suggested?", color: "var(--s3)", icon: "bulb" },
-    { title: "Claude used", q: "What really ran?", color: "var(--s4)", icon: "bot" }
+    { title: "Handled by", q: "Who did the work?", color: "var(--s4)", icon: "bot" }
   ];
-  var QUIET = { "no hint": 1, "not suggested": 1, "no clear match": 1, "unclassified": 1, "no routing hint ran": 1 };
+  var SKIP_TASK = { "under 4 words": "short reply", "over 4000 characters": "long input", "routing hint turned off": "not routed", "no agents or skills": "not routed" };
+  var SKIP_DECIDER = { "under 4 words": "too short to route", "over 4000 characters": "too long to route", "routing hint turned off": "hint turned off", "no agents or skills": "no agents to suggest" };
+  var ITSELF = "Claude itself";
+  var QUIET = { "short reply": 1, "long input": 1, "too short to route": 1, "too long to route": 1, "other prompt": 1,  "no hint": 1, "not suggested": 1, "no clear match": 1, "unclassified": 1, "no routing hint ran": 1 };
   var ICONS = {
     chat: "M4 5h16v11H9l-5 4z",
     compass: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM15.5 8.5l-2 5-5 2 2-5z",
@@ -469,7 +488,7 @@
   (function () {
     var box = $("flowsteps");
     var text = ["What kind of task the prompt was", "The trained model, the zero-shot match or a /dev-decide question",
-                "The agent or skill hinted to Claude", "The agent or skill Claude then ran"];
+                "The agent or skill hinted to Claude", "An agent or skill Claude ran, or Claude itself"];
     STAGES.forEach(function (s, i) {
       var d = el("div", "fs"), ic = icbox("ic", s.icon, s.color);
       ic.style.color = s.color; ic.firstChild.style.color = "#fff";
@@ -506,6 +525,7 @@
       var x = Math.round(300 / Math.max(s.avg_hint_ms, 0.1));
       t(x >= 2 ? ", about " + x + "× faster than a blink." : ".");
     }
+    if (s.itself) { t(" Claude did the work itself, without an agent, for "); b(String(s.itself)); t(" of them."); }
     if (s.decisions) { t(" "); b(plural(s.decisions, "/dev-decide answer")); t(" too."); }
     if (!s.used && recent && recent.last_used_ts) t(" Claude ran no agent or skill in this period; its last run was " + ago(recent.last_used_ts) + ".");
   }
@@ -867,7 +887,7 @@
       out.push({ icon: "bot", color: "var(--s4)", a: it.tool === "typed" ? "You ran" : "Claude ran, without a hint", b: it.name, c: it.ms ? "ran " + ms(it.ms) : "" });
       return out;
     }
-    out.push({ icon: "tag", color: "var(--s1)", a: "Kind of task", b: taskLabel(it) });
+    out.push({ icon: "tag", color: "var(--s1)", a: "Kind of task", b: it.kind === "hint" ? promptTask(it) : taskLabel(it) });
     if (it.kind === "decision") {
       var ans = it.answers || {}, keys = Object.keys(ans), local = 0, none = 0;
       keys.forEach(function (k) { var v = ans[k].via; if (v === "none" || v == null) none++; else if (v.indexOf("llm") !== 0) local++; });
@@ -883,12 +903,15 @@
                  c: (st.answer ? st.result + " · " : "") + ms(st.ms) });
     });
     out.push(it.hint ? { icon: "bulb", color: "var(--s3)", a: "Suggested to Claude", b: it.hint + (it.hint_kind ? " (" + it.hint_kind + ")" : ""), c: "whole hint took " + ms(it.ms) }
+                     : it.skipped ? { icon: "bulb", color: "var(--quiet)", a: "No suggestion", b: "Not routed: " + promptDecider(it) }
                      : { icon: "bulb", color: "var(--quiet)", a: "No suggestion", b: "No agent or skill fit clearly, so Claude decided alone", c: "checked in " + ms(it.ms) });
     var used = it.used || [];
     if (used.length) used.forEach(function (u) {
-      out.push({ icon: "bot", color: "var(--s4)", a: "Claude used", b: u.name, c: (u.ms ? "ran " + ms(u.ms) : "") + (u.text ? " · “" + u.text + "”" : ""), ok: u.followed });
+      out.push({ icon: "bot", color: "var(--s4)", a: "Handled by an " + (u.tool === "Skill" ? "skill" : "agent") + (u.text ? ", for the sub-task" : ""),
+                 b: u.name + (u.text ? "  “" + u.text + "”" : ""), c: u.ms ? "ran " + ms(u.ms) : "", ok: u.followed });
     });
-    else if (it.hint) out.push({ icon: "bot", color: "var(--quiet)", a: "Claude used", b: "Nothing yet (or it handled it itself)" });
+    else if (it.turn) out.push({ icon: "bot", color: "var(--s4)", a: "Handled by", b: ITSELF + ", without an agent", c: "reply took " + ms(it.turn.ms) + (toolsText(it.turn.tools) ? " · " + toolsText(it.turn.tools) : "") });
+    else out.push({ icon: "bot", color: "var(--quiet)", a: "Handled by", b: "Claude is still working on it", c: "or this prompt is older than the reply hook" });
     return out;
   }
   function renderReplay(it, play) {
@@ -918,6 +941,65 @@
   }
   $("rp-again").onclick = function () { if (S.data) renderReplay(replayItem(S.data.summary.timeline || []), true); };
 
+  // ---------- who did the work
+  function promptTask(it) { return it.skipped ? (SKIP_TASK[it.skipped] || "other prompt") : taskLabel(it); }
+  function promptDecider(it) { return it.skipped ? (SKIP_DECIDER[it.skipped] || it.skipped) : (it.decided_by || "no clear match"); }
+  function toolsText(tools) {
+    var k = Object.keys(tools || {}).sort(function (a, b) { return tools[b] - tools[a]; });
+    return k.slice(0, 5).map(function (n) { return n + " " + tools[n]; }).join(", ") + (k.length > 5 ? ", +" + (k.length - 5) + " more" : "");
+  }
+  function handledRow(it, newest) {
+    var us = el("div", "used");
+    us.appendChild(el("span", "lbl2", "handled by"));
+    (it.used || []).forEach(function (u) {
+      var t = el("span", "tag"); var dot = el("i", "dot"); dot.style.background = "var(--s4)"; t.appendChild(dot);
+      t.appendChild(el("b", "", u.name));
+      t.appendChild(document.createTextNode((u.tool === "Skill" ? " skill" : " agent") + (u.ms ? " · ran " + ms(u.ms) : "")));
+      if (u.text) { t.appendChild(document.createTextNode(" · ")); t.appendChild(el("span", "sub", "“" + u.text + "”")); }
+      t.title = (u.text ? "Sub-task: " + u.text + ". " : "") + (u.followed === true ? "The hinted one." : u.followed === false ? "Not the hinted one." : "");
+      us.appendChild(t);
+      if (u.followed === true) us.appendChild(el("span", "ok-ink", "✓ followed"));
+      if (u.followed === false) us.appendChild(el("span", "bad-ink", "✗ another one"));
+    });
+    if (!(it.used || []).length) {
+      if (it.turn) {
+        var me = el("span", "tag"); var d2 = el("i", "dot"); d2.style.background = "var(--s4)"; me.appendChild(d2);
+        me.appendChild(el("b", "", ITSELF));
+        me.appendChild(document.createTextNode(" · " + ms(it.turn.ms) + (toolsText(it.turn.tools) ? " · " + toolsText(it.turn.tools) : "")));
+        me.title = "No agent or skill ran: Claude did the work with its own tools.";
+        us.appendChild(me);
+      } else {
+        us.appendChild(el("span", "sub", newest ? "Claude is working on it…" : "not recorded (before the reply hook)"));
+      }
+    }
+    return us;
+  }
+  function renderPrompts(items) {
+    var box = $("prompts"); box.textContent = "";
+    var rows = items.filter(function (it) { return it.kind === "hint" && matches(it, S.filter); });
+    if (!rows.length) { box.appendChild(el("div", "nodata", "No prompts in this period yet.")); return; }
+    var head = el("div", "pr-row pr-head");
+    ["Prompt", "Routed", "Handled by"].forEach(function (h) { head.appendChild(el("div", "", h)); });
+    box.appendChild(head);
+    rows.slice(0, 40).forEach(function (it, i) {
+      var r = el("div", "pr-row");
+      var c1 = el("div");
+      c1.appendChild(el("div", "pr-when", ago(it.ts)));
+      c1.appendChild(el("div", "q", it.text || "(no text kept)"));
+      var tg = el("span", "tag"); var dt = el("i", "dot"); dt.style.background = "var(--s1)"; tg.appendChild(dt); tg.appendChild(document.createTextNode(promptTask(it))); c1.appendChild(tg);
+      var c2 = el("div");
+      var last = (it.steps || [])[it.steps ? it.steps.length - 1 : 0] || {};
+      c2.appendChild(el("div", "pr-dec", promptDecider(it) + (last.confidence != null && last.answer ? " · " + Math.round(last.confidence * 100) + "%" : "")));
+      var h = el("div", "pr-hint");
+      h.appendChild(document.createTextNode("→ "));
+      h.appendChild(it.hint ? el("b", "mono", it.hint) : el("span", "sub", "no hint"));
+      c2.appendChild(h);
+      var c3 = el("div"); c3.appendChild(handledRow(it, i === 0));
+      r.appendChild(c1); r.appendChild(c2); r.appendChild(c3);
+      box.appendChild(r);
+    });
+  }
+
   // ---------- timeline
   function columns(it) {  // the graph's node names this timeline item passes through, per column (as traces.py names them)
     if (it.kind === "used") {
@@ -925,7 +1007,8 @@
       return [[typed ? "typed /command" : "no routing hint ran"], [typed ? "your choice" : "Claude's own choice"], ["not suggested"], ["used " + it.name]];
     }
     var used = (it.used || []).map(function (u) { return "used " + u.name; });
-    if (it.kind === "hint") return [[taskLabel(it)], [it.decided_by || "no clear match"], [it.hint || "no hint"], used];
+    if (!used.length && it.turn) used = [ITSELF];
+    if (it.kind === "hint") return [[promptTask(it)], [promptDecider(it)], [it.hint || "no hint"], used];
     var vs = Object.keys(it.gates || {}).map(function (k) { return it.gates[k]; }).filter(function (v, i, a) { return a.indexOf(v) === i; }).sort();
     var asked = ((it.bundles && it.bundles.length ? it.bundles : it.questions) || ["?"]).join(",");
     return [[taskLabel(it)], ["/dev-decide " + asked.slice(0, 48)], [vs.length ? "gate: " + vs.join("/") : "answered"], used];
@@ -940,7 +1023,8 @@
       chip.appendChild(x); box.appendChild(chip);
     }
     (S.nodeEls || []).forEach(function (x) { x.el.classList.toggle("sel", !!f && x.name === f.name && x.col === f.col); });
-    if (S.data) { renderTimeline(S.data.summary.timeline || [], false); if (f) $("timeline").scrollIntoView({ behavior: "smooth", block: "start" }); }
+    if (S.data) { renderTimeline(S.data.summary.timeline || [], false); renderPrompts(S.data.summary.timeline || []);
+                  if (f && S.view !== "prompts") $("timeline").scrollIntoView({ behavior: "smooth", block: "start" }); }
   }
   function stepColors(i) { return ["var(--s2)", "var(--s3)", "var(--s1)", "var(--s4)"][i % 4]; }
   function renderTimeline(items, markFresh) {
@@ -958,9 +1042,9 @@
       var ic = it.kind === "hint" ? ["bulb", it.hint ? "var(--s3)" : "var(--quiet)"] : it.kind === "decision" ? ["gavel", "var(--s2)"] : ["bot", "var(--s4)"];
       li.appendChild(icbox("ic", ic[0], ic[1]));
       if (it.text) l1.appendChild(el("span", "q", it.text));
-      if (it.kind !== "used") { var tg = el("span", "tag"); var dt = el("i", "dot"); dt.style.background = "var(--s1)"; tg.appendChild(dt); tg.appendChild(document.createTextNode(taskLabel(it))); l1.appendChild(tg); }
+      if (it.kind !== "used") { var tg = el("span", "tag"); var dt = el("i", "dot"); dt.style.background = "var(--s1)"; tg.appendChild(dt); tg.appendChild(document.createTextNode(it.kind === "hint" ? promptTask(it) : taskLabel(it))); l1.appendChild(tg); }
       if (it.kind === "hint") {
-        l1.appendChild(document.createTextNode(it.hint ? "→ suggested" : "→ no suggestion"));
+        l1.appendChild(document.createTextNode(it.hint ? "→ suggested" : it.skipped ? "→ not routed (" + promptDecider(it) + ")" : "→ no suggestion"));
         if (it.hint) l1.appendChild(el("b", "mono", it.hint));
       } else if (it.kind === "decision") {
         l1.appendChild(el("b", "mono", "/dev-decide " + ((it.bundles && it.bundles.length ? it.bundles : it.questions) || []).join(", ")));
@@ -990,17 +1074,7 @@
         });
         mid.appendChild(an);
       }
-      if (it.used && it.used.length) {
-        var us = el("div", "used"); us.appendChild(document.createTextNode("then Claude used"));
-        it.used.forEach(function (u) {
-          var t = el("span", "tag"); var dot = el("i", "dot"); dot.style.background = "var(--s4)"; t.appendChild(dot);
-          t.appendChild(document.createTextNode(u.name + (u.ms ? " · " + ms(u.ms) : "")));
-          us.appendChild(t);
-          if (u.followed === true) us.appendChild(el("span", "ok-ink", "✓ followed"));
-          if (u.followed === false) us.appendChild(el("span", "bad-ink", "✗ another one"));
-        });
-        mid.appendChild(us);
-      }
+      if (it.kind === "hint") mid.appendChild(handledRow(it, it === items[0]));
       li.appendChild(mid);
       var tm = el("div", "t", ago(it.ts)); tm.title = new Date(it.ts).toLocaleString();
       tm.appendChild(el("div", "", it.kind === "used" ? (it.ms ? "ran " + ms(it.ms) : "") : ms(it.ms)));
@@ -1044,7 +1118,7 @@
         projects(data.projects || [], data.project);
         renderStory(data.summary.stats, data.summary.recent); renderTiles(data.summary.stats, data.summary.series, data.summary.recent);
         if (changed) {
-          renderFlow(data, first || opts.full); renderTable(data.summary); renderBars(data.summary.nodes || [], data.summary.recent);
+          renderFlow(data, first || opts.full); renderTable(data.summary); renderPrompts(data.summary.timeline || []); renderBars(data.summary.nodes || [], data.summary.recent);
           var isNew = !first && !opts.full && latestKey && latestKey !== S.latestKey;
           if (first || opts.full || isNew) renderReplay(replayItem(tl), true);
           if (isNew) toast("New: " + (latest.text ? "“" + latest.text + "” " : "") + (latest.kind === "hint" ? (latest.hint ? "→ " + latest.hint : "→ no suggestion") : latest.kind === "used" ? "→ used " + latest.name : "→ /dev-decide"));
@@ -1077,10 +1151,10 @@
   }
   pressGroup("period", "data-days", S.days, function (v) { S.days = v; store.set("days", v); S.showAll = false; load({ dim: true, full: true }); });
   pressGroup("view", "data-v", S.view, function (v) {
-    S.view = v; store.set("view", v); $("flow").hidden = v !== "graph"; $("table").hidden = v !== "table";
+    S.view = v; store.set("view", v); $("flow").hidden = v !== "graph"; $("table").hidden = v !== "table"; $("prompts").hidden = v !== "prompts";
     if (v === "graph" && S.data) renderFlow(S.data, false);  // sized now that it is visible
   });
-  $("flow").hidden = S.view !== "graph"; $("table").hidden = S.view !== "table";
+  $("flow").hidden = S.view !== "graph"; $("table").hidden = S.view !== "table"; $("prompts").hidden = S.view !== "prompts";
   pressGroup("kinds", "data-k", "all", function (v) { S.kind = v; S.showAll = false; if (S.data) renderTimeline(S.data.summary.timeline || [], false); });
   $("project").onchange = function () { S.project = this.value; S.filter = null; setFilter(null); load({ dim: true, full: true }); };
   $("refresh").onclick = function () { load({ full: true }); };

@@ -25,7 +25,15 @@
   next to the published Jev results. First result, Banking77 (77 intents, trained on its 8,502-example training
   split): 93.3% right, calibration error 0.040, 3 ms per decision (Jev, untrained: 78.3%, 0.096, about 840 ms).
 
+- **Who did the work, for every prompt.** A `Stop` hook marks the end of each reply: how long it took and which
+  tools Claude used (names and counts only, from the transcript's tail). The decision graph's last column is now
+  "Handled by": the agent or skill Claude ran, with the sub-task it gave it and how long it ran, or "Claude itself"
+  with its tools and time. A new **Prompts** view lists each prompt, how it was routed and who handled it.
+- Prompts too short or too long to route ("go build it") are prompts in the graph too, so the agents Claude runs
+  after them belong to them rather than to an earlier prompt.
+
 ### Fixed
+- An agent Claude ran in the foreground (the Agent call waits for it) was counted twice.
 - Messages no person typed (background-task notices, messages between agents) were routed and hinted like
   prompts and counted in the graph; they are now skipped, also in events recorded before this fix. HTML comments,
   paste wrappers and quote marks are no longer taken for the request.

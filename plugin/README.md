@@ -34,11 +34,12 @@ Reading a result: `risk 3.0? | needs a human: risk` means a score of 3.0 on a sc
 ## What the plugin installs
 
 - **Skill** `dev-decide`, in `skills/dev-decide/`.
-- **Four hooks**, in `hooks/hooks.json`:
+- **Five hooks**, in `hooks/hooks.json`:
   - `SessionStart` starts a small helper server bound to `127.0.0.1` only.
   - `UserPromptSubmit` asks that local server whether one of your agents or skills clearly matches the prompt. If so, it adds a one-line routing hint.
   - `PostToolUse` (only for the `Agent` and `Skill` tools) tells the server which agent or skill Claude really used, for the decision graph and so the hint learns which agent fits which kind of request.
   - `SubagentStop` tells it how long each agent really ran.
+  - `Stop` marks the end of each reply: how long it took and which tools Claude used (names and counts only), so a prompt no agent handled shows "Claude itself".
 
 ## Decision graph
 

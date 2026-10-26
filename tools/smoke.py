@@ -308,8 +308,38 @@ def hint_learning():
     times = {n["name"]: n.get("avg_ms") for n in summ["nodes"] if n["col"] == 3}
     check("decision graph: an agent's run time comes from SubagentStop, not its launch",
           85000 <= (times.get("used debugger") or 0) <= 120000 and times.get("used Explore") is None, str(times))
+    traces.record(repo, {"kind": "ran", "session": "fg", "name": "Plan", "ms": 12654, "ts": int(time.time() * 1000) - 5002})
+    traces.record(repo, {"kind": "used", "session": "fg", "tool": "Agent", "name": "Plan", "ms": 12668,
+                         "ts": int(time.time() * 1000) - 5000})  # a foreground call: recorded just after the agent ended
+    plan = [n for n in traces.summary(traces.load(traces.slug(repo), 1))["nodes"] if n["name"] == "used Plan"]
+    check("decision graph: a foreground agent is counted once", len(plan) == 1 and plan[0]["count"] == 1, str(plan))
     check("decision graph: a background agent with its real run time still joins the hint before it",
           summ["follow"].get("debugger") == [1, 2], str(summ["follow"]))
+    # who did the work: Claude itself (from the Stop hook), and a short prompt owns the agents after it
+    now_ms = int(time.time() * 1000)
+    stamp = lambda ms: time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(ms / 1000.0)) + ".000Z"  # noqa: E731
+    traces.record(repo, {"kind": "hint", "session": "t1", "hint": None, "decided_by": "trained model", "ts": now_ms - 70000,
+                         "text": "update the readme"})
+    lines = [{"type": "user", "timestamp": stamp(now_ms - 70000), "message": {"role": "user", "content": "update the readme"}},
+             {"type": "assistant", "timestamp": stamp(now_ms - 60000), "message": {"content": [
+                 {"type": "tool_use", "name": "Read", "input": {"file_path": "secret.txt"}},
+                 {"type": "tool_use", "name": "Edit", "input": {"old_string": "private words"}}]}},
+             {"type": "user", "timestamp": stamp(now_ms - 59000), "message": {"content": [{"type": "tool_result", "content": "x"}]}},
+             {"type": "assistant", "timestamp": stamp(now_ms - 50000), "message": {"content": [
+                 {"type": "tool_use", "name": "Edit", "input": {}}]}}]
+    (repo / "main.jsonl").write_text("".join(_json.dumps(l) + "\n" for l in lines), encoding="utf-8")
+    hook_route.turn({"transcript_path": str(repo / "main.jsonl"), "session_id": "t1", "cwd": str(repo)})
+    traces.record(repo, {"kind": "hint", "session": "t2", "skipped": "under 4 words", "ts": now_ms - 30000, "text": "go build it"})
+    traces.record(repo, {"kind": "used", "session": "t2", "tool": "Agent", "name": "general-purpose", "ts": now_ms - 20000})
+    summ = traces.summary(traces.load(traces.slug(repo), 1))
+    by_text = {t.get("text"): t for t in summ["timeline"]}
+    me = by_text.get("update the readme", {})
+    check("decision graph: a reply with no agent is handled by Claude itself, with its tools and time",
+          me.get("turn", {}).get("tools") == {"Edit": 2, "Read": 1} and 65000 <= me["turn"]["ms"] <= 80000 and
+          any(n["name"] == "Claude itself" for n in summ["nodes"]) and "private words" not in
+          traces.path(repo).read_text(encoding="utf-8"), str(me))
+    check("decision graph: a short prompt (\"go build it\") owns the agents Claude ran after it",
+          [u["name"] for u in by_text.get("go build it", {}).get("used", [])] == ["general-purpose"], str(by_text.get("go build it")))
     # a hint Claude keeps ignoring needs 0.9
     sid = "s-strict"
     for i in range(6):

@@ -7,6 +7,7 @@ Windows). This server keeps all of that loaded, so a hint takes a few millisecon
   UserPromptSubmit  {"type": "http", "url": "http://127.0.0.1:47321/route", "timeout": 2}
   PostToolUse       {"type": "http", "url": "http://127.0.0.1:47321/tool", "timeout": 2}   (matcher "Agent|Skill")
   SubagentStop      {"type": "http", "url": "http://127.0.0.1:47321/agent", "timeout": 2}
+  Stop              {"type": "http", "url": "http://127.0.0.1:47321/turn", "timeout": 2}
   SessionStart      {"type": "command", "command": "sh <scripts>/run.sh hookd.py --ensure"}
 
   hookd.py --ensure   start the server unless one with this code is already running (prints nothing)
@@ -226,7 +227,7 @@ def serve():
                 self._send(200, {"ok": True})
                 threading.Thread(target=httpd.shutdown, daemon=True).start()
                 return
-            if path not in ("/route", "/tool", "/agent"):
+            if path not in ("/route", "/tool", "/agent", "/turn"):
                 return self._send(404, {"error": "not found"})
             out = ev = data = None
             try:
@@ -238,6 +239,10 @@ def serve():
                     if first_use(data):
                         later(hook_route.used, data)
                         later(learn_from, data)
+                elif path == "/turn":  # Stop: the reply to the latest prompt is done
+                    if data.get("hook_event_name") == "Stop" and first_time(
+                            {"session_id": "turn", "prompt": "%s %s" % (data.get("session_id"), int(time.time()))}):
+                        later(hook_route.turn, data)
                 elif path == "/agent":
                     if data.get("hook_event_name") == "SubagentStop" and first_time(
                             {"session_id": "agent", "prompt": str(data.get("agent_id"))}):

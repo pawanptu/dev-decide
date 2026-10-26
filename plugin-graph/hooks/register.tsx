@@ -39,7 +39,9 @@ type Item = {
   name?: string
   tool?: string
   text?: string
+  skipped?: string
   used?: Used[]
+  turn?: { ms?: number; tools?: Record<string, number> }
 }
 type Stats = {
   prompts: number
@@ -82,10 +84,21 @@ function line(it: Item): string {
   const how = last
     ? `${last.step}${last.answer ? ` ${last.answer}` : ''}${last.confidence != null ? ` ${last.confidence.toFixed(2)}` : ''}`
     : it.decided_by ?? ''
-  const used = (it.used ?? [])
-    .map(u => ` → used ${u.name}${u.followed === true ? ' ✓' : u.followed === false ? ' ✗' : ''}`)
-    .join('')
-  return `${clock(it.ts)}  ${said}${task} → ${it.hint ?? 'no hint'} (${how}, ${ms(it.ms)})${used}`
+  // who did the work: the agents or skills Claude ran (with their sub-task), or Claude itself
+  const tools = Object.entries(it.turn?.tools ?? {})
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([n, c]) => `${n} ${c}`)
+    .join(', ')
+  const handled = (it.used ?? []).length
+    ? (it.used ?? [])
+        .map(u => ` → ${u.name}${u.followed === true ? ' ✓' : u.followed === false ? ' ✗' : ''}${u.ms ? ` ${ms(u.ms)}` : ''}`)
+        .join('')
+    : it.turn
+      ? ` → Claude itself (${ms(it.turn.ms)}${tools ? `, ${tools}` : ''})`
+      : ''
+  if (it.skipped) return `${clock(it.ts)}  ${said}not routed (${it.skipped})${handled}`
+  return `${clock(it.ts)}  ${said}${task} → ${it.hint ?? 'no hint'} (${how}, ${ms(it.ms)})${handled}`
 }
 
 function summary(s: Stats, days: number): string {

@@ -23,6 +23,18 @@ const TRACE = {
         steps: [{ step: 'trained model', answer: 'debugger', confidence: 0.9, result: 'suggested', ms: 4.1 }],
         used: [{ name: 'debugger', tool: 'Agent', ms: 2000, followed: true }],
       },
+      {
+        kind: 'hint',
+        ts: 0,
+        task_type: 'docs',
+        text: 'update the readme with the install steps',
+        hint: null,
+        decided_by: 'trained model',
+        ms: 4.0,
+        steps: [{ step: 'trained model', answer: 'none', confidence: 1, result: 'no agent or skill fits', ms: 3.2 }],
+        used: [],
+        turn: { ms: 95000, tools: { Edit: 3, Read: 2 } },
+      },
     ],
   },
   text: ['bugfix · auth  (1)', '  trained model → debugger → used debugger  1× · 5.2 ms'],
@@ -68,7 +80,9 @@ test('/dev-decide-graph opens the panel with the graph and the latest routing, o
     expect((await ui.find({ type: 'Text', text: /3 prompts, 2 hints/ }))?.text).toContain('hint followed 1/1')
     const latest = await ui.find({ type: 'Text', text: /the login page crashes/ })
     expect(latest?.text).toContain('→ debugger')
-    expect(latest?.text).toContain('used debugger ✓')
+    expect(latest?.text).toContain('→ debugger ✓ 2.0 s')
+    const itself = await ui.find({ type: 'Text', text: /update the readme/ })
+    expect(itself?.text).toContain('→ Claude itself (1.6 min, Edit 3, Read 2)')
     if (surface === 'terminal') {
       expect((await ui.find({ type: 'Text', text: /trained model → debugger/ }))?.text).toContain('used debugger')
     }

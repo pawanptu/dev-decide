@@ -200,10 +200,13 @@ def _with_run_times(events):
     for u in used:  # fixed before any run time replaces the call's own duration
         u["start"] = _start(u)
     for r in sorted((e for e in events if e.get("kind") == "ran"), key=lambda e: e.get("ts", 0)):
+        # the use that started when this agent started: a background launch is recorded at the start, a foreground
+        # call (which waits for the agent) just after the end, with the run as its duration
+        began = r.get("ts", 0) - int(r.get("ms") or 0)
         cands = [u for u in used if not u.get("ran") and u.get("name") == r.get("name")
-                 and (u.get("session") or "") == (r.get("session") or "") and u.get("ts", 0) <= r.get("ts", 0)]
+                 and (u.get("session") or "") == (r.get("session") or "") and abs(u["start"] - began) <= 60000]
         if cands:
-            u = cands[-1]
+            u = min(cands, key=lambda u: abs(u["start"] - began))
             u["ms"], u["ran"] = r.get("ms"), True
         else:  # an agent no PostToolUse reported (one started by another agent, say)
             began = r.get("ts", 0) - int(r.get("ms") or 0)
@@ -214,6 +217,12 @@ def _with_run_times(events):
             u["ms"] = None  # the launch of a background agent, not how long it ran
     return used
 
+
+ITSELF = "Claude itself"
+SKIP_TASK = {"under 4 words": "short reply", "over 4000 characters": "long input", "routing hint turned off": "not routed",
+             "no agents or skills": "not routed"}
+SKIP_DECIDER = {"under 4 words": "too short to route", "over 4000 characters": "too long to route",
+                "routing hint turned off": "hint turned off", "no agents or skills": "no agents to suggest"}
 
 BUCKETS = 12
 
@@ -250,17 +259,25 @@ def summary(events, span_ms=None, now_ms=None):
     """
     automated_count = sum(1 for e in events if automated(e))
     events = sorted((e for e in events if not automated(e)), key=_start)
-    hints = [e for e in events if e.get("kind") == "hint" and not e.get("skipped")]
+    # every prompt a person typed, routed or not ("go build it" is too short to route, yet often starts the work)
+    prompts = [e for e in events if e.get("kind") == "hint" and e.get("skipped") != "slash command"]
+    hints = [e for e in prompts if not e.get("skipped")]
     decisions = [e for e in events if e.get("kind") == "decision"]
     used = _with_run_times(events)
     # typing /skill runs a skill without the Skill tool: the prompt hook noted its name
     used += [{"kind": "used", "tool": "typed", "name": e["command"], "ts": e.get("ts", 0), "session": e.get("session"),
               "text": e.get("text")} for e in events if e.get("kind") == "hint" and e.get("command")]
     used.sort(key=_start)
-    # each use of an agent or skill belongs to the latest routing hint before it in the same session
+    # each use of an agent or skill belongs to the latest prompt before it in the same session
     by_session = {}
-    for h in hints:
+    for h in prompts:
         by_session.setdefault(h.get("session") or "", []).append(h)
+    turn_of = {}  # a prompt -> the end of Claude's reply to it (Stop hook): how long, which tools
+    for t in (e for e in events if e.get("kind") == "turn"):
+        cands = [h for h in by_session.get(t.get("session") or "", [])
+                 if abs(h.get("ts", 0) - int(t.get("prompt_ts") or 0)) <= 60000]
+        if cands:
+            turn_of[id(min(cands, key=lambda h: abs(h.get("ts", 0) - int(t.get("prompt_ts") or 0))))] = t
     links, alone, follow = {}, [], {}
     for u in used:
         prior = [h for h in by_session.get(u.get("session") or "", []) if h.get("ts", 0) <= _start(u)]
@@ -300,16 +317,25 @@ def summary(events, span_ms=None, now_ms=None):
         if followed is not None:
             e["followed"] = followed  # Claude used what was suggested (or did not)
 
-    for h in hints:
-        t = node(0, task_label(h))
-        d = node(1, h.get("decided_by") or "no clear match", h.get("ms"))
+    itself = 0
+    for h in prompts:
+        skip = h.get("skipped")
+        task = SKIP_TASK.get(skip, "other prompt") if skip else task_label(h)
+        decider = SKIP_DECIDER.get(skip, skip) if skip else (h.get("decided_by") or "no clear match")
+        t = node(0, task)
+        d = node(1, decider, None if skip else h.get("ms"))
         s = node(2, h.get("hint") or "no hint")
         edge(t, d)
         edge(d, s)
-        for u in links.get(id(h), []):
+        rows = links.get(id(h), [])
+        for u in rows:
             edge(s, node(3, "used " + (u.get("name") or "?"), u.get("ms")), u.get("followed"))
-        path(task_label(h), h.get("decided_by") or "no clear match", h.get("hint") or "no hint",
-             links.get(id(h), []), h.get("ms"))
+        turn = turn_of.get(id(h))
+        if not rows and turn:  # the reply ended and no agent or skill ran: Claude did the work itself
+            itself += 1
+            edge(s, node(3, ITSELF, turn.get("ms")))
+            rows = [{"name": ITSELF}]
+        path(task, decider, h.get("hint") or "no hint", rows, None if skip else h.get("ms"))
     for u in alone:
         typed = u.get("tool") == "typed"
         task, decided = ("typed /command", "your choice") if typed else ("no routing hint ran", "Claude's own choice")
@@ -337,13 +363,16 @@ def summary(events, span_ms=None, now_ms=None):
                  "text": u.get("text")} for u in rows]
 
     timeline = []
-    for e in sorted(hints + decisions + alone, key=lambda e: -e.get("ts", 0))[:TIMELINE]:
+    for e in sorted(prompts + decisions + alone, key=lambda e: -e.get("ts", 0))[:TIMELINE]:
         item = {k: e.get(k) for k in ("kind", "ts", "task_type", "domain", "hint", "hint_kind", "decided_by", "steps",
                                       "ms", "confidence", "options", "questions", "bundles", "answers", "gates",
-                                      "model_calls", "name", "tool", "text")}
+                                      "model_calls", "name", "tool", "text", "skipped")}
         item = {k: v for k, v in item.items() if v is not None}
         if e.get("kind") != "used":
             item["used"] = uses(links.get(id(e), []))
+        turn = turn_of.get(id(e))
+        if turn:
+            item["turn"] = {"ms": turn.get("ms"), "tools": turn.get("tools") or {}}
         timeline.append(item)
     asked = [u for u in used if "followed" in u]
     out = {
@@ -354,7 +383,8 @@ def summary(events, span_ms=None, now_ms=None):
         "stats": {
             "prompts": len(hints), "hinted": sum(1 for h in hints if h.get("hint")),
             "skipped": sum(1 for e in events if e.get("kind") == "hint" and e.get("skipped")),
-            "automated": automated_count,
+            "automated": automated_count, "itself": itself,
+            "handled": sum(1 for h in prompts if links.get(id(h)) or turn_of.get(id(h))),
             "decisions": len(decisions), "used": len(used),
             "followed": sum(1 for u in asked if u["followed"]), "after_hint": len(asked),
             "avg_hint_ms": round(sum(float(h.get("ms") or 0) for h in hints) / len(hints), 1) if hints else None,
@@ -370,10 +400,11 @@ def summary(events, span_ms=None, now_ms=None):
     return out
 
 
-COLUMNS = ("Task", "Decided by", "Suggested", "Claude used")
-QUESTIONS = ("What kind of task?", "Who chose?", "What was suggested?", "What really ran?")
+COLUMNS = ("Task", "Decided by", "Suggested", "Handled by")
+QUESTIONS = ("What kind of task?", "Who chose?", "What was suggested?", "Who did the work?")
 MAX_PER_COLUMN = 8
-QUIET = ("no hint", "not suggested", "no clear match", "unclassified", "no routing hint ran")
+QUIET = ("no hint", "not suggested", "no clear match", "unclassified", "no routing hint ran", "short reply",
+         "long input", "too short to route", "too long to route", "other prompt")
 # The validated categorical slots 1-4 (light on #ffffff, dark on #141821) for the four stages; status colors only for
 # whether Claude followed a hint, always with a check or cross beside them; text in ink tokens, never a stage color.
 PALETTE = {  # light, dark

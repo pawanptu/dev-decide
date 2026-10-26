@@ -277,8 +277,8 @@ process per prompt instead (about 70 ms), for older Claude Code versions. The ho
 first. Restart Claude Code after installing it.
 
 The same server keeps the **decision graph**: for each prompt, what decided, which agent or skill it suggested, and
-(from a `PostToolUse` hook on the Agent and Skill tools and a `SubagentStop` hook) which one Claude really ran and
-for how long. It also **learns** from that: after Claude runs an agent following a prompt, similar requests in that
+(from a `PostToolUse` hook on the Agent and Skill tools, a `SubagentStop` hook and a `Stop` hook) who did the work:
+the agent or skill Claude ran, with its sub-task and run time, or Claude itself with the tools it used. It also **learns** from that: after Claude runs an agent following a prompt, similar requests in that
 project get that agent as their hint (it keeps the prompt's meaning vector, never its text), and a hint Claude keeps
 ignoring needs more confidence. Open
 `http://127.0.0.1:47321/graph` while Claude Code runs, or install the side panel with

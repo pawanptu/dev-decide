@@ -21,7 +21,8 @@ For the decision graph it notes what it decided (each step's answer, confidence 
 time, the task's type and area, and the prompt's first 40 characters) in
 ~/.claude/dev-decide/traces (see traces.py); "decision_graph": {"enabled": false} turns
 that off, "prompt_chars": 0 keeps no prompt text. As a PostToolUse hook it notes the
-agent or skill Claude ran; as a SubagentStop hook, how long an agent really ran.
+agent or skill Claude ran; as a SubagentStop hook, how long an agent really ran; as a Stop
+hook, how long the reply took and which tools Claude used (names and counts only).
 """
 import datetime
 import json
@@ -322,6 +323,68 @@ def ran(data):
                          "ms": ms}, traces.keep_days(policy))
 
 
+TAIL_BYTES = 4 << 20  # the end of a transcript is enough to find the latest prompt and the reply to it
+
+
+def _prompt_line(r):
+    """A transcript line that is a prompt a person typed: not a tool result, not Claude Code's own note, and not a
+    notice (a background agent's end arrives as one, and Claude's reply to it continues the same job)."""
+    if r.get("type") != "user" or r.get("isMeta"):
+        return False
+    c = (r.get("message") or {}).get("content")
+    if isinstance(c, list):
+        if any(isinstance(b, dict) and b.get("type") == "tool_result" for b in c):
+            return False
+        c = " ".join(b.get("text", "") for b in c if isinstance(b, dict) and b.get("type") == "text")
+    return isinstance(c, str) and bool(c.strip()) and not automated(c)
+
+
+def turn(data):
+    """A Stop hook input -> the end of Claude's reply to the latest prompt: how long the reply took and which tools it
+    used, by name and count only (read from the transcript's tail; never their inputs, results or the text). The
+    views join it to its prompt, so a prompt no agent handled shows "Claude itself" and what it did."""
+    import ddcore as dd
+    import traces
+    from collections import Counter
+
+    root = dd.project_root(data.get("cwd") or None)
+    policy = dd.load_policy(root)
+    if not traces.enabled(policy):
+        return
+    try:
+        with open(str(data.get("transcript_path") or ""), "rb") as fh:
+            fh.seek(0, 2)
+            size = fh.tell()
+            fh.seek(max(0, size - TAIL_BYTES))
+            lines = fh.read().decode("utf-8", "replace").splitlines()
+    except OSError:
+        return
+    if size > TAIL_BYTES:
+        lines = lines[1:]  # the first line is cut
+    rows = []
+    for line in lines:
+        try:
+            rows.append(json.loads(line))
+        except ValueError:
+            pass
+    start = max((i for i, r in enumerate(rows) if _prompt_line(r)), default=None)
+    if start is None:
+        return
+    try:
+        began = _iso_ms(rows[start]["timestamp"])
+    except (KeyError, ValueError):
+        return
+    tools = Counter()
+    for r in rows[start + 1:]:
+        if r.get("type") == "assistant":
+            for b in (r.get("message") or {}).get("content") or []:
+                if isinstance(b, dict) and b.get("type") == "tool_use" and isinstance(b.get("name"), str):
+                    tools[b["name"][:60]] += 1
+    traces.record(root, {"kind": "turn", "session": data.get("session_id") or None, "prompt_ts": int(began),
+                         "ms": max(0, int(time.time() * 1000 - began)), "tools": dict(tools.most_common(20))},
+                  traces.keep_days(policy))
+
+
 def main():
     if os.environ.get("DEV_DECIDE_CHILD"):
         return
@@ -336,6 +399,8 @@ def main():
         return used(data)
     if event == "SubagentStop":
         return ran(data)
+    if event == "Stop":
+        return turn(data)
     out, ev = explain(data)
     if out:
         print(json.dumps(out))
