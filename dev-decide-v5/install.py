@@ -18,8 +18,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 SRC = HERE / "skill"
-HOOK_MARKS = ("hook_route.py", "hookd.py", ":47321/route", ":47321/tool")  # every form of the routing hint, old and new
-HOOK_EVENTS = ("UserPromptSubmit", "SessionStart", "PostToolUse")
+HOOK_MARKS = ("hook_route.py", "hookd.py", ":47321/route", ":47321/tool", ":47321/agent")  # every form of the routing hint, old and new
+HOOK_EVENTS = ("UserPromptSubmit", "SessionStart", "PostToolUse", "SubagentStop")
 USED_TOOLS = "Agent|Skill"  # what Claude really used, for the decision graph
 HOOK_PORT = 47321
 
@@ -159,6 +159,7 @@ def main():
             hooks.setdefault("UserPromptSubmit", []).append({"hooks": [{"type": "command", "command": cmd, "timeout": 5}]})
             hooks.setdefault("PostToolUse", []).append(
                 {"matcher": USED_TOOLS, "hooks": [{"type": "command", "command": cmd, "timeout": 5}]})
+            hooks.setdefault("SubagentStop", []).append({"hooks": [{"type": "command", "command": cmd, "timeout": 5}]})
         else:  # a local server answers in milliseconds; each session start makes sure it runs
             cmd = '%s "%s" --ensure' % (py, (scripts / "hookd.py").as_posix())
             hooks.setdefault("SessionStart", []).append({"hooks": [{"type": "command", "command": cmd, "timeout": 10}]})
@@ -167,6 +168,8 @@ def main():
             hooks.setdefault("PostToolUse", []).append(
                 {"matcher": USED_TOOLS, "hooks": [{"type": "http", "url": "http://127.0.0.1:%d/tool" % HOOK_PORT,
                                                    "timeout": 2}]})
+            hooks.setdefault("SubagentStop", []).append(  # how long each agent really ran, for the decision graph
+                {"hooks": [{"type": "http", "url": "http://127.0.0.1:%d/agent" % HOOK_PORT, "timeout": 2}]})
         save_settings(sfile, data)
         print("added the router hook (%s) to %s" % (args.router_hook, sfile))
         if args.router_hook == "http":

@@ -216,6 +216,21 @@ def _escalate(work, req, cat, ctx, flags, policy, root, llm_info):
 _WORST = {"pass": 0, "review": 1, "block": 2}
 
 
+def _audit(rows, states, batch, reg, llm_info):
+    """Make each decision-log row an audit record: the engine version, a hash of the input (never the input), and the
+    version of whatever answered (the learned model's version, or the model backend)."""
+    inputs_by_item = {(st.item.id if batch else None): st.item.fingerprint()[:16] for st in states if not st.error}
+    for r in rows:
+        r["v"] = dd.VERSION
+        r["input"] = inputs_by_item.get(r.get("item"))
+        via = r.get("via") or ""
+        if via == "learned":
+            meta = reg.index.get(r.get("preset")) or {}
+            r["model"] = learn.champion_id(meta, meta or None)
+        elif via.startswith("llm"):
+            r["model"] = (llm_info or {}).get("backend") or "llm"
+
+
 def _trace(root, policy, req, out, items, facts=None):
     """Note this decision for the decision graph (traces.py): the questions, the answers and where each came
     from, the gates and the time, labeled with the input's task type and area. Never the input itself."""
@@ -412,6 +427,7 @@ def decide(text=None, spec=None, cwd=None, extra_flags=(), use_cache=True, api_k
         obj = {"id": st.item.id if batch else None, "files": [f.path for f in st.item.files],
                "bundles": list(req.bundles), "answers": {k: st.decided[k] for k in order if k in st.decided}}
         finals.append(finalize.finalize_one(obj, fctx, did, rows))
+    _audit(rows, states, batch, reg, llm_info)
     try:
         finalize.write_log(root, policy, rows)
         if capture and rows:

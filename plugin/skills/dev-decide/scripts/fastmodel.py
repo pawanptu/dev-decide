@@ -447,6 +447,21 @@ def optional_registry(names):
     return reg
 
 
+def current_starter(reg, preset, names):
+    """A read-only Registry over the shipped optional starter for `preset` when the project still holds an older,
+    unmodified copy of it (one the shipped model lists in "replaces"), else None. The routing hint uses it: it never
+    writes to a repository, so a project only gets new starters when /dev-decide itself runs there."""
+    meta = reg.index.get(preset) or {}
+    if meta.get("source") != "dev-decide-kit" or meta.get("version_id") or "restored" in meta:
+        return None
+    entry = (dd.read_json(OPTIONAL_DIR / "index.json", default={}) or {}).get(preset)
+    if not entry or meta.get("trained") not in (entry.get("replaces") or []) or not _fits(entry, names):
+        return None
+    shipped = Registry(None, models_dir=OPTIONAL_DIR)
+    shipped.index = {preset: entry}
+    return shipped
+
+
 def class_floor(model, label):
     """The extra confidence one class needs (kit training measured where its answers reach the target)."""
     try:

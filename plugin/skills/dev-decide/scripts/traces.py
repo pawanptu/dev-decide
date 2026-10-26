@@ -175,8 +175,44 @@ def task_label(e):
 
 
 def _start(e):
-    """When an event began: a tool's end time minus how long it ran."""
-    return e.get("ts", 0) - int(e.get("ms") or 0) if e.get("kind") == "used" else e.get("ts", 0)
+    """When an event began: its own start when known, else a tool's end time minus how long it ran."""
+    if e.get("start") is not None:
+        return e["start"]
+    return e.get("ts", 0) - int(e.get("ms") or 0) if e.get("kind") in ("used", "ran") else e.get("ts", 0)
+
+
+AUTOMATED = ("<task-notification", "<agent-message", "<teammate-message", "<channel-message", "<local-command")
+
+
+def automated(e):
+    """A hint event for a message no person typed (a background task's notice, a message between agents): recorded
+    as a prompt before the hint learned to skip them, so the views skip it."""
+    return e.get("kind") == "hint" and (e.get("skipped") == "automated message"
+                                        or str(e.get("text") or "").lstrip().startswith(AUTOMATED))
+
+
+def _with_run_times(events):
+    """Claude Code reports how long the Agent tool call took, which for an agent started in the background is only
+    its launch. SubagentStop ("ran" events) gives the real run time: put it on the matching use, by session and
+    agent, the latest use that started before the agent finished. A use with no match keeps a duration only when it
+    is long enough to be a real run (a foreground agent)."""
+    used = [dict(e) for e in events if e.get("kind") == "used"]
+    for u in used:  # fixed before any run time replaces the call's own duration
+        u["start"] = _start(u)
+    for r in sorted((e for e in events if e.get("kind") == "ran"), key=lambda e: e.get("ts", 0)):
+        cands = [u for u in used if not u.get("ran") and u.get("name") == r.get("name")
+                 and (u.get("session") or "") == (r.get("session") or "") and u.get("ts", 0) <= r.get("ts", 0)]
+        if cands:
+            u = cands[-1]
+            u["ms"], u["ran"] = r.get("ms"), True
+        else:  # an agent no PostToolUse reported (one started by another agent, say)
+            began = r.get("ts", 0) - int(r.get("ms") or 0)
+            used.append({"kind": "used", "tool": "Agent", "name": r.get("name"), "session": r.get("session"),
+                         "ts": began, "start": began, "ms": r.get("ms"), "ran": True})
+    for u in used:
+        if u.get("tool") == "Agent" and not u.get("ran") and (u.get("ms") or 0) < 1000:
+            u["ms"] = None  # the launch of a background agent, not how long it ran
+    return used
 
 
 BUCKETS = 12
@@ -193,6 +229,8 @@ def series(events, span_ms, now_ms):
         if not 0 <= i < BUCKETS:
             continue
         kind = e.get("kind")
+        if automated(e):
+            continue
         if kind == "hint" and not e.get("skipped"):
             out["prompts"][i] += 1
             out["hints"][i] += bool(e.get("hint"))
@@ -210,10 +248,11 @@ def summary(events, span_ms=None, now_ms=None):
     Columns: the task (type · area) -> what decided (the step that answered, or the /dev-decide questions) -> the
     suggestion (an agent or skill, a gate verdict, or none) -> what Claude really used after it in that session.
     """
-    events = sorted(events, key=_start)
+    automated_count = sum(1 for e in events if automated(e))
+    events = sorted((e for e in events if not automated(e)), key=_start)
     hints = [e for e in events if e.get("kind") == "hint" and not e.get("skipped")]
     decisions = [e for e in events if e.get("kind") == "decision"]
-    used = [dict(e) for e in events if e.get("kind") == "used"]
+    used = _with_run_times(events)
     # typing /skill runs a skill without the Skill tool: the prompt hook noted its name
     used += [{"kind": "used", "tool": "typed", "name": e["command"], "ts": e.get("ts", 0), "session": e.get("session"),
               "text": e.get("text")} for e in events if e.get("kind") == "hint" and e.get("command")]
@@ -222,13 +261,16 @@ def summary(events, span_ms=None, now_ms=None):
     by_session = {}
     for h in hints:
         by_session.setdefault(h.get("session") or "", []).append(h)
-    links, alone = {}, []
+    links, alone, follow = {}, [], {}
     for u in used:
         prior = [h for h in by_session.get(u.get("session") or "", []) if h.get("ts", 0) <= _start(u)]
         if u.get("tool") != "typed" and prior:
             h = prior[-1]
             if h.get("hint"):
                 u["followed"] = h["hint"] == u.get("name")
+                f = follow.setdefault(h["hint"], [0, 0])  # per hinted agent: [uses that followed it, uses after it]
+                f[0] += u["followed"]
+                f[1] += 1
             links.setdefault(id(h), []).append(u)
         else:
             alone.append(u)
@@ -312,6 +354,7 @@ def summary(events, span_ms=None, now_ms=None):
         "stats": {
             "prompts": len(hints), "hinted": sum(1 for h in hints if h.get("hint")),
             "skipped": sum(1 for e in events if e.get("kind") == "hint" and e.get("skipped")),
+            "automated": automated_count,
             "decisions": len(decisions), "used": len(used),
             "followed": sum(1 for u in asked if u["followed"]), "after_hint": len(asked),
             "avg_hint_ms": round(sum(float(h.get("ms") or 0) for h in hints) / len(hints), 1) if hints else None,
@@ -321,6 +364,7 @@ def summary(events, span_ms=None, now_ms=None):
             "last": max(e.get("ts", 0) for e in events) if events else None,
         },
     }
+    out["follow"] = follow
     if span_ms:
         out["series"] = series(events, span_ms, now_ms if now_ms is not None else int(time.time() * 1000))
     return out
@@ -593,3 +637,32 @@ def text_tree(s, limit=10):
                 t += " · " + ms_text(p["avg_ms"])
             lines.append(t)
     return lines
+
+
+_FOLLOW = {}  # trace file -> (mtime, {hinted agent: [followed, uses after it]})
+
+
+def follow_stats(root, days=30, refresh=False):
+    """How often Claude used the agent or skill a hint named, per hinted name, over the last `days` days. Without
+    refresh it returns the last count, even if newer events exist, so the hint never waits for a recount; the hint
+    server recounts after answering (hook_route.note)."""
+    p = path(root)
+    hit = _FOLLOW.get(str(p))
+    if not refresh:
+        return hit[1] if hit else {}
+    try:
+        mtime = p.stat().st_mtime
+    except OSError:
+        return {}
+    if hit and hit[0] == mtime:
+        return hit[1]
+    stats = summary(load(slug(root), days)).get("follow", {})
+    _FOLLOW[str(p)] = (mtime, stats)
+    return stats
+
+
+def last_use(project_id, days=30):
+    """(uses in the last `days` days, the time of the latest) for a project, for the page's empty states."""
+    evs = [e for e in load(project_id, days) if e.get("kind") in ("used", "ran")
+           or (e.get("kind") == "hint" and e.get("command"))]
+    return len([e for e in evs if e.get("kind") != "ran"]), max([e.get("ts", 0) for e in evs] or [None])

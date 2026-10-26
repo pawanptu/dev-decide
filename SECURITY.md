@@ -36,6 +36,10 @@ You will get a reply within 7 days. We will tell you when it is fixed and, if yo
   it keeps only the first 40 characters, with anything that looks like a key or token masked; it never keeps the
   prompt Claude gives a subagent, or any tool result. `"decision_graph": {"prompt_chars": 0}` keeps no prompt text,
   `"enabled": false` keeps nothing, and a server that listens beyond localhost records nothing.
+- **The routing hint's usage memory** keeps, per project, the meaning vector (256 numbers) of each prompt after
+  which Claude ran an agent or skill, with that agent's name, in `~/.claude/dev-decide/traces/usage/`, never the
+  prompt's text. `"router_hook": {"learn": false}` turns it off. For an agent's run time it reads only the first
+  line's timestamp of the agent's transcript.
 - **The web console** loads only its own scripts (`script-src 'self'`: no inline script, no `eval`, no CDN), and a
   key typed into it is sent with that one request only, never stored.
 

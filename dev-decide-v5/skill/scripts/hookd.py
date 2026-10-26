@@ -6,6 +6,7 @@ Windows). This server keeps all of that loaded, so a hint takes a few millisecon
 
   UserPromptSubmit  {"type": "http", "url": "http://127.0.0.1:47321/route", "timeout": 2}
   PostToolUse       {"type": "http", "url": "http://127.0.0.1:47321/tool", "timeout": 2}   (matcher "Agent|Skill")
+  SubagentStop      {"type": "http", "url": "http://127.0.0.1:47321/agent", "timeout": 2}
   SessionStart      {"type": "command", "command": "sh <scripts>/run.sh hookd.py --ensure"}
 
   hookd.py --ensure   start the server unless one with this code is already running (prints nothing)
@@ -119,6 +120,25 @@ def serve():
                                                      data.get("tool_input")], sort_keys=True, default=str)
         return first_time({"session_id": "tool", "prompt": tid})
 
+    # Each session's latest real prompt, in memory only (never written): when Claude then runs an agent or skill,
+    # the usage memory learns "a request like this one led to that" (as a meaning vector, see usage.py).
+    last_prompt, learned = {}, set()
+
+    def remember(data, ev):
+        if ev and not ev.get("skipped") and data.get("session_id"):
+            with seen_lock:
+                for k in [k for k, v in last_prompt.items() if time.time() - v[0] > hook_route.LEARN_WINDOW_S]:
+                    del last_prompt[k]
+                last_prompt[data["session_id"]] = (time.time(), hook_route.user_text(data.get("prompt")))
+
+    def learn_from(data):
+        with seen_lock:
+            hit = last_prompt.get(data.get("session_id") or "")
+        _, name, _ = hook_route._used_name(data)
+        if hit and name and (hit[0], name) not in learned:  # one lesson per prompt and agent
+            learned.add((hit[0], name))
+            hook_route.learn_use(data, hit[1], hit[0])
+
     def later(fn, *args):  # trace writes happen after the answer is sent, so they never slow a prompt
         def run():
             try:
@@ -140,7 +160,10 @@ def serve():
             days = min(max(float((q.get("days") or ["1"])[0]), 1 / 24.0), 366.0)
         except ValueError:
             days = 1.0
-        return traces, projects, pid, days, traces.summary(traces.load(pid, days), span_ms=days * 86400000)
+        summ = traces.summary(traces.load(pid, days), span_ms=days * 86400000)
+        n, ts = traces.last_use(pid)
+        summ["recent"] = {"used_30d": n, "last_used_ts": ts}  # so an empty period can point to the last run
+        return traces, projects, pid, days, summ
 
     class Handler(BaseHTTPRequestHandler):
         server_version = SERVICE
@@ -203,7 +226,7 @@ def serve():
                 self._send(200, {"ok": True})
                 threading.Thread(target=httpd.shutdown, daemon=True).start()
                 return
-            if path not in ("/route", "/tool"):
+            if path not in ("/route", "/tool", "/agent"):
                 return self._send(404, {"error": "not found"})
             out = ev = data = None
             try:
@@ -214,8 +237,14 @@ def serve():
                 elif path == "/tool":
                     if first_use(data):
                         later(hook_route.used, data)
+                        later(learn_from, data)
+                elif path == "/agent":
+                    if data.get("hook_event_name") == "SubagentStop" and first_time(
+                            {"session_id": "agent", "prompt": str(data.get("agent_id"))}):
+                        later(hook_route.ran, data)
                 elif first_time(data):
                     out, ev = hook_route.explain(data)
+                    remember(data, ev)
             except Exception:
                 out = None  # a hint must never break a prompt: answer "no hint"
             self._send(200, out)  # an empty 2xx body means "no hint" (or "go ahead") to Claude Code

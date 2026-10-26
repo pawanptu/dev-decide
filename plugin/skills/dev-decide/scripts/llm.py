@@ -18,6 +18,7 @@ to send your key to its own server or run a program of its choosing.
 """
 import json
 import os
+import random
 import re
 import shlex
 import shutil
@@ -134,8 +135,9 @@ def backend_choice(policy):
     return "api" if _available("api") else ("cli" if _available("cli") else "none")
 
 
-def describe(q, routes):
-    """One question with the exact line the model must write for it."""
+def describe(q, routes, rnd=None):
+    """One question with the exact line the model must write for it. rnd shuffles a choice's options: models lean
+    toward options listed first, so a fixed order would favour the same option every time."""
     s = q.spec
     if q.kind == "choose":
         opts = s.get("options")
@@ -144,6 +146,8 @@ def describe(q, routes):
         opts = list(opts or [])
         if s.get("allow_none") and "none" not in opts:
             opts.append("none")
+        if rnd is not None:
+            rnd.shuffle(opts)
         return "%s: choose one of %s\n  line: %s choose <option>=<p> <option>=<p> _rest=<p>" % (
             q.key, "|".join(opts), q.key)
     if q.kind == "score":
@@ -179,8 +183,10 @@ def build_messages(chunk, questions, ctx, flags, batch):
         for k in st.pending:
             if k not in keys:
                 keys.append(k)
+    # the same input gets the same order (answers stay reproducible); different inputs get different orders
+    rnd = random.Random(dd.stable_hash(*[st.item.fingerprint() for st in chunk]))
     lines = ["# Questions"]
-    lines += ["- " + describe(questions[k], ctx["routes"]) for k in keys]
+    lines += ["- " + describe(questions[k], ctx["routes"], rnd) for k in keys]
     lines.append("")
     lines.append("Evidence requested: add one short why line per key." if "why" in flags else
                  "Evidence not requested: do not write why lines.")
@@ -197,8 +203,9 @@ def build_messages(chunk, questions, ctx, flags, batch):
         lines += ["", "# The user's corrections of earlier, similar decisions",
                   "Follow these conventions when an input is the same kind of case:"] + ["- " + x for x in precedents[:6]]
     if any(questions[k].preset == "route" or questions[k].spec.get("options") == "auto" for k in keys) and ctx["routes"]:
-        lines += ["", "# Route options"] + ["- %s [%s]: %s" % (r["name"], r["kind"], r["description"])
-                                             for r in ctx["routes"]]
+        shown = list(ctx["routes"])
+        rnd.shuffle(shown)
+        lines += ["", "# Route options"] + ["- %s [%s]: %s" % (r["name"], r["kind"], r["description"]) for r in shown]
     budget = max(4000, MAX_INPUT_CHARS // max(1, len(chunk)))
     for n, st in enumerate(chunk, 1):
         lines.append("")

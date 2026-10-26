@@ -432,7 +432,7 @@
     var diff = Math.round((t - new Date(d.getFullYear(), d.getMonth(), d.getDate())) / 86400000);
     return diff === 0 ? "Today" : diff === 1 ? "Yesterday" : d.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" });
   }
-  function periodName() { return { "0.0417": "hour", "1": "24 hours", "7": "7 days", "30": "30 days" }[S.days] || S.days + " days"; }
+  function periodName(d) { d = d || S.days; return { "0.0417": "hour", "1": "24 hours", "7": "7 days", "30": "30 days" }[d] || d + " days"; }
   function taskLabel(it) { return [it.task_type, it.domain].filter(Boolean).join(" · ") || "unclassified"; }
   function toast(msg) { var t = $("toast"); t.textContent = msg; t.classList.add("on"); clearTimeout(toast.t); toast.t = setTimeout(function () { t.classList.remove("on"); }, 3200); }
   function countUp(node, to, fmt) {
@@ -488,7 +488,7 @@
   })();
 
   // ---------- story + tiles
-  function renderStory(s) {
+  function renderStory(s, recent) {
     var p = $("story"); p.textContent = "";
     function t(x) { p.appendChild(document.createTextNode(x)); }
     function b(x) { p.appendChild(el("b", "", x)); }
@@ -507,6 +507,7 @@
       t(x >= 2 ? ", about " + x + "× faster than a blink." : ".");
     }
     if (s.decisions) { t(" "); b(plural(s.decisions, "/dev-decide answer")); t(" too."); }
+    if (!s.used && recent && recent.last_used_ts) t(" Claude ran no agent or skill in this period; its last run was " + ago(recent.last_used_ts) + ".");
   }
   function spark(values, accent) {
     var w = 120, h = 30, max = Math.max.apply(null, values.concat([1]));
@@ -532,11 +533,12 @@
     if (!m) { m = el("div", "meter"); m.appendChild(el("i")); box.textContent = ""; box.appendChild(m); }
     requestAnimationFrame(function () { m.firstChild.style.width = Math.round(100 * Math.max(0, Math.min(1, share))) + "%"; });
   }
-  function renderTiles(s, series) {
+  function renderTiles(s, series, recent) {
     var ser = series || {};
     var int = function (x) { return String(Math.round(x)); };
     var a = tile("prompts", "Prompts routed", "chat");
-    countUp(a.v, s.prompts, int); a.s.textContent = s.skipped ? s.skipped + " skipped (slash, very short)" : "every prompt you sent";
+    var skip = (s.skipped || 0) + (s.automated || 0);
+    countUp(a.v, s.prompts, int); a.s.textContent = skip ? skip + " skipped (slash, very short, automated)" : "every prompt you sent";
     a.extra.textContent = ""; if (ser.prompts) a.extra.appendChild(spark(ser.prompts, "var(--s1)"));
     var b = tile("hints", "Hints given", "bulb");
     countUp(b.v, s.hinted, int); b.s.textContent = s.prompts ? Math.round(100 * s.hinted / s.prompts) + "% of prompts got one" : "no prompts yet";
@@ -550,7 +552,8 @@
     d.s.textContent = s.avg_hint_ms == null ? " " : "a blink is about 300 ms";
     meter(d.extra, s.avg_hint_ms == null ? 0 : Math.min(1, s.avg_hint_ms / 300));
     var e = tile("used", "Agents & skills run", "bot");
-    countUp(e.v, s.used, int); e.s.textContent = "Agent, Skill and /commands";
+    countUp(e.v, s.used, int);
+    e.s.textContent = !s.used && recent && recent.last_used_ts ? "last run " + ago(recent.last_used_ts) : "Agent, Skill and /commands";
     e.extra.textContent = ""; if (ser.used) e.extra.appendChild(spark(ser.used, "var(--s4)"));
     var f = tile("decisions", "/dev-decide answers", "gavel");
     countUp(f.v, s.decisions, int); f.s.textContent = s.avg_decision_ms == null ? "none in this period" : "avg " + ms(s.avg_decision_ms);
@@ -579,10 +582,25 @@
       requestAnimationFrame(function () { fill.style.width = Math.max(2, 100 * r.count / peak) + "%"; });
     });
   }
-  function renderBars(nodes) {
+  function periodFor(ts) {  // the shortest period that still shows a moment
+    var age = (Date.now() - ts) / 86400000;
+    return ["0.0417", "1", "7", "30"].filter(function (d) { return +d >= age; })[0] || "30";
+  }
+  function lastRunNote(recent) {
+    if (!recent || !recent.last_used_ts) return null;
+    var box = el("div", "nodata");
+    box.appendChild(document.createTextNode("Claude ran no agent or skill in this period. Its last run was " + ago(recent.last_used_ts) + " "));
+    var d = periodFor(recent.last_used_ts), b = el("button", "btn", "Show the last " + periodName.call(null, d));
+    b.type = "button"; b.style.marginLeft = "6px";
+    b.onclick = function () { var x = document.querySelector('#period [data-days="' + d + '"]'); if (x) x.click(); };
+    box.appendChild(b);
+    return box;
+  }
+  function renderBars(nodes, recent) {
     function col(c) { return nodes.filter(function (n) { return n.col === c; }); }
     var used = col(3).map(function (n) { return { name: n.name.replace(/^used /, ""), count: n.count, sub: n.avg_ms != null ? "avg " + ms(n.avg_ms) : "" }; });
     bars($("bars-used"), used, { empty: "Claude has not run an agent or skill in this period. They appear here when it does." });
+    if (!used.length && lastRunNote(recent)) { $("bars-used").textContent = ""; $("bars-used").appendChild(lastRunNote(recent)); }
     $("used-sub").textContent = used.length ? "how often, and how long each ran" : "";
     bars($("bars-tasks"), col(0).map(function (n) { return { name: n.name, count: n.count, quiet: !!QUIET[n.name] }; }));
     bars($("bars-deciders"), col(1).map(function (n) { return { name: n.name, count: n.count, quiet: !!QUIET[n.name], sub: n.avg_ms != null ? "avg " + ms(n.avg_ms) : "" }; }));
@@ -954,6 +972,7 @@
       mid.appendChild(l1);
       if (it.kind === "hint" && it.steps && it.steps.length) {
         var wf = el("div", "wf"), wl = el("div", "wf-l"), tot = it.steps.reduce(function (a, s) { return a + (s.ms || 0); }, 0) || 1;
+        wf.style.width = Math.max(24, Math.min(420, tot * 6)) + "px";
         it.steps.forEach(function (st, i) {
           var seg = el("i"); seg.style.background = stepColors(i); seg.style.flex = String(Math.max(0.04, (st.ms || 0) / tot)); wf.appendChild(seg);
           var lab = el("span"), k = el("i", "key"); k.style.background = stepColors(i); lab.appendChild(k);
@@ -1023,9 +1042,9 @@
         S.data = data;
         if (!S.project && data.project) S.project = data.project;
         projects(data.projects || [], data.project);
-        renderStory(data.summary.stats); renderTiles(data.summary.stats, data.summary.series);
+        renderStory(data.summary.stats, data.summary.recent); renderTiles(data.summary.stats, data.summary.series, data.summary.recent);
         if (changed) {
-          renderFlow(data, first || opts.full); renderTable(data.summary); renderBars(data.summary.nodes || []);
+          renderFlow(data, first || opts.full); renderTable(data.summary); renderBars(data.summary.nodes || [], data.summary.recent);
           var isNew = !first && !opts.full && latestKey && latestKey !== S.latestKey;
           if (first || opts.full || isNew) renderReplay(replayItem(tl), true);
           if (isNew) toast("New: " + (latest.text ? "“" + latest.text + "” " : "") + (latest.kind === "hint" ? (latest.hint ? "→ " + latest.hint : "→ no suggestion") : latest.kind === "used" ? "→ used " + latest.name : "→ /dev-decide"));

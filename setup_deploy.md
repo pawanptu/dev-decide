@@ -277,7 +277,10 @@ process per prompt instead (about 70 ms), for older Claude Code versions. The ho
 first. Restart Claude Code after installing it.
 
 The same server keeps the **decision graph**: for each prompt, what decided, which agent or skill it suggested, and
-(from a `PostToolUse` hook on the Agent and Skill tools) which one Claude really ran and for how long. Open
+(from a `PostToolUse` hook on the Agent and Skill tools and a `SubagentStop` hook) which one Claude really ran and
+for how long. It also **learns** from that: after Claude runs an agent following a prompt, similar requests in that
+project get that agent as their hint (it keeps the prompt's meaning vector, never its text), and a hint Claude keeps
+ignoring needs more confidence. Open
 `http://127.0.0.1:47321/graph` while Claude Code runs, or install the side panel with
 `/plugin install dev-decide-graph@dev-decide` and type `/dev-decide-graph` (Claude Code 2.1.310 or later). It is
 kept on your computer only, in `~/.claude/dev-decide/traces/`, for 30 days, with the first 40 characters of each

@@ -333,10 +333,14 @@ def finalize_answer(key, a, ctx):
     res.update(body)
     threshold = dd.threshold_for(policy, key, preset)
     conf = res["confidence"]
+    try:  # three bands: accept at or above the threshold, escalate just below it, a person below that
+        band = float(dd.policy_get(policy, "escalate.band", ESCALATE_BAND))
+    except (TypeError, ValueError):
+        band = ESCALATE_BAND
     res["abstain"] = conf < threshold
     if conf >= threshold:
         res["next"] = "accept"
-    elif conf >= threshold - ESCALATE_BAND:
+    elif conf >= threshold - band:
         res["next"] = "escalate"
     else:
         res["next"] = "ask_human"
@@ -353,7 +357,8 @@ def finalize_answer(key, a, ctx):
     else:
         raw_logged = round(raw, 4)
     row = {"key": key, "preset": name, "type": kind, "via": via, "pred_raw": pred, "raw": raw_logged,
-           "final": res.get("choice", res.get("level", res.get("p_true"))), "confidence": conf}
+           "final": res.get("choice", res.get("level", res.get("p_true"))), "confidence": conf,
+           "threshold": round(threshold, 4), "next": res["next"]}
     return res, row
 
 

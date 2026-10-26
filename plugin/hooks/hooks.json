@@ -33,6 +33,17 @@
           }
         ]
       }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://127.0.0.1:47321/agent",
+            "timeout": 2
+          }
+        ]
+      }
     ]
   }
 }

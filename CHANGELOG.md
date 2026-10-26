@@ -3,6 +3,38 @@
 ## Unreleased
 
 ### Added
+- **The routing hint learns what Claude really runs.** When Claude runs an agent or skill after a prompt, the hint
+  server keeps the prompt's meaning vector (never its text) and the agent's name, per project, outside the
+  repository (`~/.claude/dev-decide/traces/usage/`). A later request that means much the same, with at least 3
+  similar past requests agreeing, gets that agent as its hint, ahead of the generic models. The bar (similarity
+  0.55, 3 votes) was chosen on the kit's labeled routing requests: 87.5-100% of its hints right, answering more
+  often as the memory grows. `"router_hook": {"learn": false}` turns it off.
+- **Hints Claude keeps ignoring get stricter:** once Claude has used another agent after at least 5 hints for the
+  same one, and followed fewer than 1 in 5, that hint needs 0.9 confidence in that project.
+- **Built-in agents can be suggested** (`Explore`, `Plan`, `general-purpose`): `"builtins": true` is now the default.
+  On the kit's held-out requests, hints rose from 87.0% to 89.7% of requests, and 4.2% of hints now name a
+  built-in agent where the label names a specialist; wrong hints on held-out chat stay at 1 of 42.
+- **Real agent run times:** a `SubagentStop` hook records how long each agent ran (from its transcript's first
+  timestamp; nothing else is read). Before, the graph showed the Agent tool call's time, which for an agent
+  started in the background is only its launch.
+- Decision-log rows are audit records: engine version, a hash of the input, which model version answered, the
+  threshold and the band (`next`). The escalate band's width is a setting (`"escalate": {"band": 0.15}`).
+- Options reach the model in a shuffled order (the same order for the same input), since models lean toward
+  options listed first.
+- `tools/jev_bench.py`: downloads Banking77, TweetEval, HelpSteer2 and RAGTruth and tests the local tier on them
+  next to the published Jev results. First result, Banking77 (77 intents, trained on its 8,502-example training
+  split): 93.3% right, calibration error 0.040, 3 ms per decision (Jev, untrained: 78.3%, 0.096, about 840 ms).
+
+### Fixed
+- Messages no person typed (background-task notices, messages between agents) were routed and hinted like
+  prompts and counted in the graph; they are now skipped, also in events recorded before this fix. HTML comments,
+  paste wrappers and quote marks are no longer taken for the request.
+- A project that held an older copy of the shipped route model kept using it, because the hint never updates a
+  project; it now uses the shipped one, read only, unless the project trained its own.
+- The decision graph page says when Claude last ran an agent and offers a period that shows it, instead of an
+  empty chart for a short period.
+
+### Added (earlier in this release)
 - **Other models.** Three new backends next to Claude, which stays the default: `openai` (any OpenAI-compatible
   Chat Completions endpoint: OpenAI, Azure OpenAI's v1 endpoint, Groq, Together, OpenRouter, Mistral, DeepSeek, or
   a local Ollama, LM Studio or vLLM server), `gemini` (Google's Gemini API) and `command` (any model CLI, such as

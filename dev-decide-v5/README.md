@@ -271,6 +271,14 @@ Windows). Only when the match is clear, it adds one line of context, for example
 closely matches the skill `db-migrate` ... confidence 0.86". It never blocks a prompt or calls a model,
 and it writes nothing to your repository. Tune or disable it under `router_hook` in the policy file.
 
+**It learns which agent Claude really runs.** The hint server asks, in order: what Claude ran after similar
+requests in this project (`scripts/usage.py`: a meaning vector of each prompt that led to an agent run, never its
+text, in `~/.claude/dev-decide/traces/usage/`), the trained route model (the shipped one when the project holds
+an older, unmodified copy), then the zero-shot match, which also knows Claude Code's built-in agents
+(`"builtins": true`). A hint Claude keeps ignoring in a project (followed after fewer than 1 in 5 of at least 5
+hints) needs 0.9 confidence. Messages no person typed (background-task notices, messages between agents) get no
+hint. `"router_hook": {"learn": false}` turns the learning off.
+
 **Decision graph.** The same server records what each hint decided (each step's answer, confidence and time, the
 task's type and area, and the first 40 characters of the prompt with keys and tokens masked), which agent or skill
 Claude then ran (a `PostToolUse` hook on the Agent and Skill tools) and every `/dev-decide` answer, in

@@ -250,6 +250,115 @@ def hint_server():
         shutil.rmtree(str(repo), ignore_errors=True)
 
 
+def hint_learning():
+    sys.path.insert(0, str(SCRIPTS))
+    import json as _json
+    import fastmodel as fm
+    import hook_route
+    import traces
+    import usage
+    # inputs no person typed, and wrappers around typed words
+    check("routing hint: background-task notices and agent messages are skipped",
+          hook_route.automated("<task-notification> <task-id>b1</task-id> done") and
+          hook_route.automated("<agent-message from=\"a1\">please review the change</agent-message>"))
+    check("routing hint: comments, paste wrappers and quote marks are not the request",
+          hook_route.user_text("<!-- reply 1 --> > Exclude places from the offer list") == "Exclude places from the offer list"
+          and hook_route.user_text('<pasted_content id="1">a long log</pasted_content> why does this login test fail')
+          == "why does this login test fail")
+    repo = git_repo()
+    out, ev = hook_route.explain({"prompt": "<task-notification> <task-id>x</task-id> <status>completed</status>",
+                                  "cwd": str(repo), "session_id": "s"})
+    check("routing hint: an automated message gets no hint and keeps no text",
+          out is None and ev["skipped"] == "automated message" and ev.get("text") is None, str(ev))
+    # a project holding an older copy of the shipped route model is answered by the shipped one
+    names = ["backend-reviewer", "db-migrate", "debugger", "devops-deploy", "docs-writer", "frontend-dev",
+             "security-auditor", "test-writer"]
+    shipped = _json.loads((fm.OPTIONAL_DIR / "index.json").read_text(encoding="utf-8"))["route"]
+    old = fm.Registry(None, models_dir=fm.OPTIONAL_DIR)
+    old.index = {"route": dict(shipped, trained=(shipped.get("replaces") or ["?"])[0])}
+    check("routing hint: an older copy of the shipped route model gives way to the shipped one",
+          fm.current_starter(old, "route", names) is not None)
+    old.index["route"]["version_id"] = "learn:3:1"
+    check("routing hint: a route model the project trained itself is kept",
+          fm.current_starter(old, "route", names) is None)
+    # the usage memory: what Claude ran after similar requests
+    import router
+    m = router._meaning_model()
+    for text in ("rename the orders column in postgres", "rename the user email column in the postgres table",
+                 "write a migration that renames the user email column"):
+        usage.record(repo, m.encode(text), "db-migrate")
+    hit = usage.suggest(repo, m.encode("rename the customer email column in postgres"), {"db-migrate", "debugger"})
+    check("usage memory: a request like earlier ones gets the agent Claude ran for them", bool(hit) and hit[0] == "db-migrate",
+          str(hit))
+    check("usage memory: an unrelated request gets nothing",
+          usage.suggest(repo, m.encode("thanks, that looks great to me"), {"db-migrate"}) is None)
+    raw = usage.path(repo).read_text(encoding="utf-8")
+    check("usage memory: keeps meaning vectors, never the text", "orders" not in raw and "postgres" not in raw)
+    # real run times from SubagentStop, and launch times dropped
+    tr = repo / "agent.jsonl"
+    tr.write_text(_json.dumps({"timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(time.time() - 90))}) + "\n",
+                  encoding="utf-8")
+    traces.record(repo, {"kind": "hint", "session": "s9", "hint": "debugger", "ts": int(time.time() * 1000) - 2000})
+    hook_route.used({"tool_name": "Agent", "tool_input": {"subagent_type": "debugger"}, "duration_ms": 25,
+                     "session_id": "s9", "cwd": str(repo)})
+    hook_route.ran({"agent_type": "debugger", "agent_transcript_path": str(tr), "session_id": "s9", "cwd": str(repo)})
+    hook_route.used({"tool_name": "Agent", "tool_input": {"subagent_type": "Explore"}, "duration_ms": 30,
+                     "session_id": "s9", "cwd": str(repo)})
+    summ = traces.summary(traces.load(traces.slug(repo), 1))
+    times = {n["name"]: n.get("avg_ms") for n in summ["nodes"] if n["col"] == 3}
+    check("decision graph: an agent's run time comes from SubagentStop, not its launch",
+          85000 <= (times.get("used debugger") or 0) <= 120000 and times.get("used Explore") is None, str(times))
+    check("decision graph: a background agent with its real run time still joins the hint before it",
+          summ["follow"].get("debugger") == [1, 2], str(summ["follow"]))
+    # a hint Claude keeps ignoring needs 0.9
+    sid = "s-strict"
+    for i in range(6):
+        traces.record(repo, {"kind": "hint", "session": sid, "hint": "docs-writer", "ts": 1000 + 10 * i + int(time.time() * 1000) - 60000})
+        traces.record(repo, {"kind": "used", "session": sid, "tool": "Agent", "name": "backend-reviewer",
+                             "ts": 1005 + 10 * i + int(time.time() * 1000) - 60000})
+    check("routing hint: Claude's follow rate per hinted agent is counted",
+          traces.follow_stats(repo, refresh=True).get("docs-writer") == [0, 6], str(traces.follow_stats(repo)))
+    shutil.rmtree(str(repo), ignore_errors=True)
+
+
+def option_order_and_audit():
+    sys.path.insert(0, str(SCRIPTS))
+    import ddcore as dd
+    import engine
+    import finalize
+    import inputs
+    import llm
+    import request
+    repo = git_repo()
+    policy = dd.load_policy(repo)
+    cat = dd.load_catalog(policy)
+
+    def order(text):
+        req = request.parse_text("issue_type :: " + text, cat)
+        st = engine.ItemState(0, inputs.resolve(None, text, str(repo), str(repo)))
+        st.pending = list(req.questions)
+        _, user = llm.build_messages([st], req.questions, {"routes": [], "policy": policy}, set(), False)
+        return [l for l in user.splitlines() if "choose one of" in l][0]
+    orders = set(order("input number %d about a failing login" % i) for i in range(6))
+    check("model prompt: options are shuffled per input, and stable for one input",
+          len(orders) > 1 and order("same input") == order("same input"))
+    saved = os.environ.get("DEV_DECIDE_BACKEND")
+    os.environ["DEV_DECIDE_BACKEND"] = "mock"  # the built-in stand-in model: no network, no cost
+    try:
+        out = engine.decide("+llm issue_type :: Login returns 500 for users with a plus sign in their email", cwd=str(repo))
+    finally:
+        os.environ["DEV_DECIDE_BACKEND"] = saved or "none"
+    rows = dd.read_jsonl(repo / ".claude" / "dev-decide" / "log.jsonl")
+    need = {"threshold", "next", "v", "input", "model"}
+    check("decision log rows are audit records (version, input hash, model, threshold, band)",
+          bool(rows) and all(need <= set(r) for r in rows), str(rows[:1])[:200])
+    a = {"type": "verify", "p_true": 0.5, "via": "llm"}
+    ctx = {"cat": cat, "policy": dict(policy, escalate={"band": 0.0}), "warnings": [], "floors": {}}
+    res, _ = finalize.finalize_answer("secret_leak", a, ctx)
+    check("the escalate band is a setting", res["next"] == "ask_human" and out is not None, str(res))
+    shutil.rmtree(str(repo), ignore_errors=True)
+
+
 def decision_graph():
     sys.path.insert(0, str(SCRIPTS))
     import traces
@@ -608,7 +717,7 @@ def server():
 if __name__ == "__main__":
     for step in (manifests, plugin_in_sync, first_run, hook_writes_nothing, secrets, rollback, routing, short_issues,
                  starter_upgrade, optional_route_model, gate_guesses, limit_messages, other_backends, mcp, state_sync,
-                 decision_graph, hint_server, server):
+                 option_order_and_audit, hint_learning, decision_graph, hint_server, server):
         try:
             step()
         except Exception as exc:
