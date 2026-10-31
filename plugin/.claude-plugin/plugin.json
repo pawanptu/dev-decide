@@ -1,6 +1,6 @@
 {
   "name": "dev-decide",
-  "version": "5.3.0",
+  "version": "5.3.1",
   "description": "A Jev-style decision engine for software and AI work, open source and local: typed, calibrated decisions that route requests, triage issues, rate risk and gate pull requests. Runs on your machine; asks Claude with your own sign-in or ANTHROPIC_API_KEY.",
   "author": {
     "name": "pawanptu",

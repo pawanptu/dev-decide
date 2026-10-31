@@ -1,4 +1,4 @@
-# dev-decide 5.3.0
+# dev-decide 5.3.1
 
 A Jev-style decision engine (open source, local) for software and AI work, packaged as a Claude Code skill plus a
 command-line tool, an opt-in routing hook and a small HTTP API. It decides locally in milliseconds

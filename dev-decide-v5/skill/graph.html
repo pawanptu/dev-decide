@@ -609,19 +609,25 @@
     d.appendChild(k); d.appendChild(v); d.appendChild(s); d.appendChild(extra); $("tiles").appendChild(d);
     return (tileNodes[key] = { v: v, s: s, extra: extra });
   }
-  function meter(box, share) {
-    var m = box.querySelector(".meter");
-    if (!m) { m = el("div", "meter"); m.appendChild(el("i")); box.textContent = ""; box.appendChild(m); }
-    requestAnimationFrame(function () { m.firstChild.style.width = Math.round(100 * Math.max(0, Math.min(1, share))) + "%"; });
+  function meter(box, share, label) {
+    var m = box.querySelector(".meter"), pct = Math.round(100 * Math.max(0, Math.min(1, share)));
+    if (!m) { m = el("div", "meter"); m.setAttribute("role", "meter"); m.setAttribute("aria-valuemin", "0"); m.setAttribute("aria-valuemax", "100"); m.appendChild(el("i")); box.textContent = ""; box.appendChild(m); }
+    if (label) m.setAttribute("aria-label", label);
+    m.setAttribute("aria-valuenow", String(pct));
+    requestAnimationFrame(function () { m.firstChild.style.width = pct + "%"; });
   }
   var SAV = { at: 0, project: null, busy: false };
   function loadSavings() {
     var p = S.project || "";
-    if (SAV.busy || (SAV.project === p && Date.now() - SAV.at < 60000)) return;
+    if (SAV.busy || (SAV.project === p && Date.now() - SAV.at < 60000) || Date.now() - (SAV.failed || 0) < 15000) return;
     SAV.busy = true;
+    if (SAV.project !== p) { $("sav-body").textContent = ""; $("sav-body").appendChild(el("div", "nodata", "Counting…")); $("sav-when").textContent = ""; }  // another project: do not show the last one's numbers
     fetch("/savings?days=7&project=" + encodeURIComponent(p), { cache: "no-store" }).then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
       .then(function (rep) { SAV.at = Date.now(); SAV.project = p; SAV.busy = false; renderSavings(rep); })
-      .catch(function () { SAV.busy = false; });
+      .catch(function () {
+        SAV.busy = false; SAV.failed = Date.now();
+        if (SAV.project !== p) { var box = $("sav-body"); box.textContent = ""; box.appendChild(el("div", "nodata", "Couldn't read the transcripts for this project. It will try again in a moment.")); }
+      });
   }
   function renderSavings(rep) {
     var box = $("sav-body"), n = rep.now, b = rep.before, spent = n && n.spent;
@@ -633,7 +639,7 @@
     left.appendChild(el("div", "big", tok(n.flagged_tokens) + " tokens"));
     left.appendChild(el("div", "sub", "came in through reads the token guard speaks up about: " + pct(n.flagged_share) + " of the " + tok(spent.input + spent.cache_write + spent.output) + " new tokens spent"));
     [["This period", n.flagged_share], ["The days before", b && b.spent ? b.flagged_share : null]].forEach(function (r) {
-      var row = el("div", "bar"), m = el("div"); row.appendChild(el("span", "", r[0])); row.appendChild(m); row.appendChild(el("span", "", pct(r[1]))); meter(m, r[1] || 0); left.appendChild(row);
+      var row = el("div", "bar"), m = el("div"); row.appendChild(el("span", "", r[0])); row.appendChild(m); row.appendChild(el("span", "", pct(r[1]))); meter(m, r[1] || 0, r[0] + ": share of new tokens flagged"); left.appendChild(row);
     });
     var right = el("div"), t = el("table"), labels = [["big-file", "Whole reads of files over 40 KB"], ["repeat", "Same file read again, unedited"], ["bash", "git log with no count, cat of a big file"]];
     labels.forEach(function (l) {
@@ -655,15 +661,15 @@
     a.extra.textContent = ""; if (ser.prompts) a.extra.appendChild(spark(ser.prompts, "var(--s1)"));
     var b = tile("hints", "Hints given", "bulb");
     countUp(b.v, s.hinted, int); b.s.textContent = s.prompts ? Math.round(100 * s.hinted / s.prompts) + "% of prompts got one" : "no prompts yet";
-    meter(b.extra, s.prompts ? s.hinted / s.prompts : 0);
+    meter(b.extra, s.prompts ? s.hinted / s.prompts : 0, "Share of prompts that got a hint");
     var c = tile("followed", "Hint followed", "check");
     c.v.textContent = s.after_hint ? s.followed + "/" + s.after_hint : "–";
     c.s.textContent = s.after_hint ? Math.round(100 * s.followed / s.after_hint) + "% of uses after a hint" : "no agent used after a hint yet";
-    meter(c.extra, s.after_hint ? s.followed / s.after_hint : 0);
+    meter(c.extra, s.after_hint ? s.followed / s.after_hint : 0, "Share of uses after a hint that followed it");
     var d = tile("speed", "Avg hint time", "bolt");
     d.v.setAttribute("data-v", "0"); d.v.textContent = s.avg_hint_ms == null ? "–" : ms(s.avg_hint_ms);
     d.s.textContent = s.avg_hint_ms == null ? " " : "a blink is about 300 ms";
-    meter(d.extra, s.avg_hint_ms == null ? 0 : Math.min(1, s.avg_hint_ms / 300));
+    meter(d.extra, s.avg_hint_ms == null ? 0 : Math.min(1, s.avg_hint_ms / 300), "Average hint time against 300 milliseconds");
     var e = tile("used", "Agents & skills run", "bot");
     countUp(e.v, s.used, int);
     e.s.textContent = !s.used && recent && recent.last_used_ts ? "last run " + ago(recent.last_used_ts) : "Agent, Skill and /commands";

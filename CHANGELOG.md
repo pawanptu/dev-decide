@@ -1,5 +1,11 @@
 # Changelog
 
+## 5.3.1 (31 October 2026)
+
+### Fixed
+- The graph page's Token savings card shows an error line when the transcripts cannot be read, resets when the project
+  changes, and its meters carry `role="meter"` values and labels.
+
 ## 5.3.0 (31 October 2026)
 
 ### Added

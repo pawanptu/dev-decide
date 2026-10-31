@@ -26,7 +26,7 @@
       "name": "dev-decide",
       "source": "./plugin",
       "description": "A Jev-style decision engine, open source and local: routes requests, triages issues, rates risk and gates pull requests with typed, calibrated answers. Answers locally in milliseconds when it can, asks Claude when it can't, and learns from every answer.",
-      "version": "5.3.0",
+      "version": "5.3.1",
       "category": "development",
       "keywords": [
         "decision",
