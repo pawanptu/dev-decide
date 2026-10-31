@@ -171,7 +171,7 @@ files in `+local` mode), no model is called at all. The learned tier grows from 
 ## Install
 
 ```bash
-unzip dev-decide-v5-kit.zip && cd dev-decide-v5-kit/dev-decide-v5
+git clone https://github.com/pawanptu/dev-decide && cd dev-decide/dev-decide-v5
 python3 install.py                       # all your projects (~/.claude)
 python3 install.py --project             # this repository only (./.claude)
 python3 install.py --router-hook         # also add the routing hint hook (opt-in; settings backed up)

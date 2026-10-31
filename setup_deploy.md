@@ -1,12 +1,12 @@
 # dev-decide: run it locally and deploy it live
 
-This guide is for **dev-decide 5.2** (the GitHub repository; the steps also work from the 5.0.1 zip). Part 1 sets it up on your own computer:
+This guide is for **dev-decide 5.2** (the GitHub repository). Part 1 sets it up on your own computer:
 the Claude Code skill, the command line and the local HTTP API. Part 2 puts the HTTP API on the internet, on a
 free platform.
 
-> **Use the 5.0.1 zip for everything in Part 2.** The HTTP API in the earlier 5.0 zip has no token check and lets
-> callers read files on the machine it runs on, so it must never be reachable from the internet. 5.0.1 adds both
-> protections and otherwise decides exactly like 5.0.
+> **Use 5.0.1 or later for everything in Part 2.** The HTTP API in 5.0 has no token check and lets callers read
+> files on the machine it runs on, so it must never be reachable from the internet. 5.0.1 added both protections
+> and otherwise decides exactly like 5.0.
 
 Platform limits in Part 2 were checked against each provider's documentation on 19–23 October 2026. Free tiers
 change often, so look at the provider's page again before you rely on a limit.
@@ -48,25 +48,27 @@ change often, so look at the provider's page again before you rely on a limit.
 On Windows, the skill needs Git Bash (Claude Code's default shell when Git for Windows is installed) or WSL. The
 command line and the HTTP API run anywhere Python does.
 
-### Step 2. Unzip the bundle
+### Step 2. Get the code
 
 ```bash
 cd ~
-unzip ~/Downloads/dev-decide-v5.0.1-kit.zip     # use the path where you saved the zip
-cd ~/dev-decide-v5-kit
+git clone https://github.com/pawanptu/dev-decide
+cd ~/dev-decide
 ls
-# README.md  dev-decide-kit  dev-decide-v5  setup_deploy.md
+# CHANGELOG.md  README.md  dev-decide-kit  dev-decide-server  dev-decide-v5  plugin  plugin-graph  setup_deploy.md  tools ...
 grep '^VERSION' dev-decide-v5/skill/scripts/ddcore.py
 # VERSION = "5.2.0"
 ```
 
-If you unzipped 5.0 to `~/dev-decide-v5-kit` before, delete that folder first (`rm -rf ~/dev-decide-v5-kit`).
-The installed skill and everything dev-decide has learned are stored elsewhere, so deleting it loses nothing.
+If you already have a clone, run `git pull` in it instead. The installed skill and everything dev-decide has
+learned are stored elsewhere, so re-cloning loses nothing.
 
 - `dev-decide-v5/` holds the engine, the Claude Code skill and the bundled meaning model (30 MB, MIT licence).
 - `dev-decide-kit/` is the training kit, with pretrained starting models in `dev-decide-kit/pretrained/`.
+- `plugin/` and `plugin-graph/` are the Claude Code plugins, `dev-decide-server/` is the deployed server's own
+  project, and `tools/` holds the tests and benchmarks.
 
-The rest of this guide assumes the folder is `~/dev-decide-v5-kit`. If you put it somewhere else, change that path
+The rest of this guide assumes the folder is `~/dev-decide`. If you put it somewhere else, change that path
 in the commands.
 
 ### Step 3. Install the skill
@@ -74,14 +76,14 @@ in the commands.
 For all your projects (installs to `~/.claude/skills/dev-decide`):
 
 ```bash
-python3 ~/dev-decide-v5-kit/dev-decide-v5/install.py
+python3 ~/dev-decide/dev-decide-v5/install.py
 ```
 
 Or for one repository only. Run it from inside that repository, because it installs into `./.claude`:
 
 ```bash
 cd /path/to/your/repo
-python3 ~/dev-decide-v5-kit/dev-decide-v5/install.py --project
+python3 ~/dev-decide/dev-decide-v5/install.py --project
 ```
 
 The installer replaces any earlier dev-decide (3.x, 4.x or 5.0) and keeps what each repository has learned. If
@@ -142,8 +144,8 @@ day one. Exporting them needs no extra packages. Run it in the same repository:
 
 ```bash
 cd /path/to/your/repo
-python3 ~/dev-decide-v5-kit/dev-decide-kit/kit.py export \
-    --data ~/dev-decide-v5-kit/dev-decide-kit/pretrained --repo . \
+python3 ~/dev-decide/dev-decide-kit/kit.py export \
+    --data ~/dev-decide/dev-decide-kit/pretrained --repo . \
     --only risk,breaking_change,issue_type,severity,domain
 ```
 
@@ -264,9 +266,9 @@ Environment variables override the policy:
 ### Step 11. The routing hook (optional)
 
 ```bash
-python3 ~/dev-decide-v5-kit/dev-decide-v5/install.py --router-hook
+python3 ~/dev-decide/dev-decide-v5/install.py --router-hook
 # for a project install, run this from the repository instead:
-python3 ~/dev-decide-v5-kit/dev-decide-v5/install.py --project --router-hook
+python3 ~/dev-decide/dev-decide-v5/install.py --project --router-hook
 ```
 
 On each prompt a small local server (`hookd.py`, started by a session-start hook and reached through Claude
@@ -289,14 +291,14 @@ prompt text and `"decision_graph": {"enabled": false}` keeps nothing.
 
 ### Step 12. Update or uninstall
 
-To update, unzip the newer bundle and run its `install.py` the same way. Learned data is kept.
+To update, run `git pull` in your clone and run `install.py` the same way. Learned data is kept.
 
 To uninstall:
 
 ```bash
-python3 ~/dev-decide-v5-kit/dev-decide-v5/install.py --uninstall
+python3 ~/dev-decide/dev-decide-v5/install.py --uninstall
 # for a project install, run this from that repository:
-python3 ~/dev-decide-v5-kit/dev-decide-v5/install.py --project --uninstall
+python3 ~/dev-decide/dev-decide-v5/install.py --project --uninstall
 ```
 
 This removes the skill and the hook. It leaves `<repo>/.claude/dev-decide/` (logs, labels, models) in place;
@@ -414,7 +416,7 @@ Do this once, on your computer. Every option deploys this same folder.
 ```bash
 mkdir -p ~/dev-decide-server/repo/.claude
 cd ~/dev-decide-server
-cp -R ~/dev-decide-v5-kit/dev-decide-v5/skill ./skill
+cp -R ~/dev-decide/dev-decide-v5/skill ./skill
 ```
 
 `repo/` is the project the server decides for: its policy, its agents and skills (for `route`), and its models.
@@ -445,8 +447,8 @@ or list them under `routes` in `repo/.claude/dev-decide.json`, which is often si
 **3. Add starting models** (recommended). Use the kit's pretrained models:
 
 ```bash
-python3 ~/dev-decide-v5-kit/dev-decide-kit/kit.py export \
-    --data ~/dev-decide-v5-kit/dev-decide-kit/pretrained --repo ./repo \
+python3 ~/dev-decide/dev-decide-kit/kit.py export \
+    --data ~/dev-decide/dev-decide-kit/pretrained --repo ./repo \
     --only risk,breaking_change,issue_type,severity,domain
 ```
 

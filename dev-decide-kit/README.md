@@ -105,9 +105,9 @@ The four decisions marked "not yet" keep using dev-decide's rules and LLM tier e
 nothing. They need more data, and for PR risk, real diffs (see "Making it more accurate"). Full details are in
 `pretrained/reports/report.md`.
 
-**After export, dev-decide 4.0 keeps learning.** The kit gives each decision type a starting model;
+**After export, dev-decide keeps learning.** The kit gives each decision type a starting model;
 from then on Claude's answers, spot checks and your corrections improve it, and dev-decide switches models only
-when a candidate proves better on your own decisions (see "The learning loop" in `dev-decide-v4/README.md`).
+when a candidate proves better on your own decisions (see "The learning loop" in `dev-decide-v5/README.md`).
 The four decision types that are "not yet" enabled can get there through use.
 
 **A spot check on hand-written inputs is less rosy than the test split.** On 12 issues written by hand, outside
@@ -117,19 +117,19 @@ currency symbol" → `docs` at 0.83). On 12 hand-written routing requests, `rout
 The 98% test figure is agreement with the teacher on synthetic issues; real issue wording differs, so label a
 sample of your own issues before relying on automatic triage.
 
-## What's in the zip
+## What's in the repository
 
 | Folder | What it is |
 |---|---|
-| `dev-decide-v4/` | dev-decide 4.0: the engine, which reads the kit's models and then keeps learning from use. Install this; it replaces 3.x. |
+| `dev-decide-v5/` | The dev-decide engine, which reads the kit's models and then keeps learning from use. Install this; it replaces 3.x and 4.x. |
 | `dev-decide-kit/` | This kit. |
 | `dev-decide-kit/pretrained/` | Data, models and the report from the run above, so you can use the triage and PR models today. |
 
 ## Quick start
 
 ```bash
-# 1. dev-decide 4.0 (reads the kit's models, then keeps improving them from use)
-cd dev-decide-v4 && python3 install.py && cd ..
+# 1. dev-decide (reads the kit's models, then keeps improving them from use)
+cd dev-decide-v5 && python3 install.py && cd ..
 
 # 2. training dependencies (dev-decide itself stays standard-library only)
 pip install numpy scipy scikit-learn
