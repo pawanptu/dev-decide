@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 5.3.0 (31 October 2026)
 
 ### Added
 - **Lean plugin `dev-decide-lite`**: just the token guard (a command hook, no server, no models; it remembers reads

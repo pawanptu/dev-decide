@@ -1,4 +1,4 @@
-# dev-decide 5.2 + dev-decide-kit
+# dev-decide 5.3 + dev-decide-kit
 
 ## Waste fewer Claude Code tokens
 

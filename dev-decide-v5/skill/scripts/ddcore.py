@@ -11,7 +11,7 @@ import subprocess
 import time
 from pathlib import Path
 
-VERSION = "5.2.0"
+VERSION = "5.3.0"
 SCRIPTS_DIR = Path(__file__).resolve().parent
 SKILL_DIR = SCRIPTS_DIR.parent
 SKILL_NAME = "dev-decide"

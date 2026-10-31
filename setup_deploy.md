@@ -57,7 +57,7 @@ cd ~/dev-decide
 ls
 # CHANGELOG.md  README.md  dev-decide-kit  dev-decide-server  dev-decide-v5  plugin  plugin-graph  setup_deploy.md  tools ...
 grep '^VERSION' dev-decide-v5/skill/scripts/ddcore.py
-# VERSION = "5.2.0"
+# VERSION = "5.3.0"
 ```
 
 If you already have a clone, run `git pull` in it instead. The installed skill and everything dev-decide has
@@ -207,14 +207,14 @@ in a terminal:
 
 ```bash
 python3 ~/.claude/skills/dev-decide/scripts/serve.py --port 8765 --cwd /path/to/your/repo
-# dev-decide 5.2.0 listening on http://127.0.0.1:8765 (repo: /path/to/your/repo; no authentication; file references on)
+# dev-decide 5.3.0 listening on http://127.0.0.1:8765 (repo: /path/to/your/repo; no authentication; file references on)
 ```
 
 Open http://127.0.0.1:8765/ in a browser for a web page with a live console, or use curl from a second terminal:
 
 ```bash
 curl -s localhost:8765/health
-# {"ok": true, "version": "5.2.0", ...}
+# {"ok": true, "version": "5.3.0", ...}
 
 curl -s localhost:8765/v1/decide -H 'Content-Type: application/json' \
   -d '{"state": "Login returns 500 for users with a plus sign in their email", "questions": ["triage"]}'
@@ -233,7 +233,7 @@ token locally too, start it with `DEV_DECIDE_TOKEN` set and send `-H "Authorizat
 
 | Endpoint | What it does |
 |---|---|
-| `GET /health` | Returns `{"ok": true, "version": "5.2.0", ...}` with Claude availability, model-call use and the demo token if set. Never needs a token. |
+| `GET /health` | Returns `{"ok": true, "version": "5.3.0", ...}` with Claude availability, model-call use and the demo token if set. Never needs a token. |
 | `POST /v1/decide` | `{"state": "...", "questions": [...]}`. Optional: `"diff"`, `"items"` (a batch), `"mode": "local"` or `"llm"`, `"why": true`. |
 | `POST /v1/feedback` | `{"id": "<decision id>", "answers": {"key": "correct value"}}`, plus `"item"` for a batch item. |
 | `GET /v1/learning` | The state of the learning loop. |
@@ -528,7 +528,7 @@ personal use and small businesses; Podman is an open-source alternative that tak
 ```bash
 docker build -t dev-decide .
 docker run --rm -p 127.0.0.1:8765:8765 -e DEV_DECIDE_TOKEN='<your token>' dev-decide
-# dev-decide 5.2.0 listening on http://0.0.0.0:8765 (repo: /app/repo; token required; file references off)
+# dev-decide 5.3.0 listening on http://0.0.0.0:8765 (repo: /app/repo; token required; file references off)
 ```
 
 In a second terminal:
@@ -692,7 +692,7 @@ From your computer:
 
 ```bash
 export DD_URL=https://<your hostname> DD_TOKEN='<your token>'
-curl -s $DD_URL/health                                 # {"ok": true, "version": "5.2.0", ...}
+curl -s $DD_URL/health                                 # {"ok": true, "version": "5.3.0", ...}
 ```
 
 Both containers start again by themselves after a crash or a reboot.
