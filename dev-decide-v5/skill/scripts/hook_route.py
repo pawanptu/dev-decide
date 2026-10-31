@@ -451,7 +451,9 @@ def learn_files(data, prompt, hinted_at):
     if not files_enabled(policy):
         return
     try:
-        rel = os.path.relpath(os.path.join(str(data.get("cwd") or root), target), str(root)).replace(os.sep, "/")
+        # real paths on both sides: Windows temp folders have short (RUNNER~1) and long spellings of one folder
+        rel = os.path.relpath(os.path.realpath(os.path.join(str(data.get("cwd") or root), target)),
+                              os.path.realpath(str(root))).replace(os.sep, "/")
     except ValueError:
         return
     if rel.startswith("..") or rel.split("/")[0] == ".git" or len(rel) > 200 or _SECRET_FILE.search(rel):
