@@ -1,5 +1,26 @@
 # dev-decide 5.2 + dev-decide-kit
 
+## Waste fewer Claude Code tokens
+
+The quickest way in is the small plugin that only does this. In Claude Code:
+
+```
+/plugin marketplace add pawanptu/dev-decide
+/plugin install dev-decide-lite@dev-decide
+```
+
+- **A token guard.** Before Claude reads a file over 40 KB whole, reads an unchanged file again, or runs `git log` with
+  no count, it gets a one-line note (use Grep, or read a range). Local rules, no model call, no server, advice only.
+- **A savings report.** `/dev-decide-lite:savings` counts, from the transcripts Claude Code already keeps, where the
+  last 7 days went and how much came in through reads the guard targets, against the 7 days before. It shows an
+  upper bound, not a promise: on one developer's three busiest days that share was 2-3% of new tokens, so run it on
+  your own history first (`python3 dev-decide-v5/skill/scripts/savings.py`) to see whether it is worth installing.
+- **Private.** It keeps counts and sizes only: never a path, a command or any text.
+
+The full plugin below adds typed decisions, routing hints and gates on top, and shows the same report as a card on
+the decision graph page.
+
+
 dev-decide is a Jev-style decision engine for software and AI work: a Claude Code skill, a command-line tool,
 an HTTP API and an opt-in routing hook. It answers typed questions (route this request, triage this issue, rate
 this diff) locally in milliseconds when it can, asks Claude when it can't, and learns from every answer.

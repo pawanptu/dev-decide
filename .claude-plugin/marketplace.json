@@ -9,6 +9,20 @@
   },
   "plugins": [
     {
+      "name": "dev-decide-lite",
+      "source": "./plugin-lite",
+      "description": "Waste fewer Claude Code tokens. A token guard that notes a whole read of a big file, a re-read of an unchanged file and an unbounded git log before they happen, plus a savings report counted from your own transcripts. Local only, advice only, no server, no model.",
+      "version": "0.1.0",
+      "category": "development",
+      "keywords": [
+        "tokens",
+        "context",
+        "cost",
+        "guard",
+        "savings"
+      ]
+    },
+    {
       "name": "dev-decide",
       "source": "./plugin",
       "description": "A Jev-style decision engine, open source and local: routes requests, triages issues, rates risk and gates pull requests with typed, calibrated answers. Answers locally in milliseconds when it can, asks Claude when it can't, and learns from every answer.",

@@ -49,6 +49,10 @@ You will get a reply within 7 days. We will tell you when it is fixed and, if yo
   and a command's words to add a note such as "this file is about 20,000 lines". It keeps in memory (not on disk, lost
   when the server stops) which files were read and when, to notice a re-read; the trace keeps only the rule's name, the
   tool and a token estimate, never a path or a command. `"token_guard": {"enabled": false}` turns it off.
+- **The lean plugin and the savings report** (`lite.py`, `savings.py`) read Claude Code's transcripts in
+  `~/.claude/projects` on your machine, count tokens and read sizes, and print totals; they store nothing from them. The
+  lean plugin keeps, in `~/.claude/dev-decide/guard/`, a hash of each read file's path with its time, size and
+  modification time (to notice a re-read), and a log of each note's rule and token estimate. No path, command or text.
 - **Instant answers** (off unless `"instant": {"enabled": true}`): a prompt that starts with `/dev-decide ` is answered
   by the local engine instead of Claude. It runs the same engine with the same model backend as the skill, so the
   request goes where the skill's would; nothing else about the prompt is stored.

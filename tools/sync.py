@@ -39,6 +39,24 @@ def mirror(src, dest):
             shutil.copy2(str(s), str(d))
 
 
+# The lean plugin (dev-decide-lite) carries only the token guard and the savings report.
+LITE = ROOT / "plugin-lite" / "scripts"
+LITE_FILES = ("run.sh", "guard.py", "tokens.py", "savings.py", "lite.py")
+
+
+def sync_lite():
+    LITE.mkdir(parents=True, exist_ok=True)
+    for p in LITE.iterdir():
+        if p.name not in LITE_FILES and not skipped(p):
+            shutil.rmtree(str(p)) if p.is_dir() else p.unlink()
+    for name in LITE_FILES:
+        s, d = SRC / "scripts" / name, LITE / name
+        if not d.exists() or not filecmp.cmp(str(s), str(d), shallow=False):
+            shutil.copy2(str(s), str(d))
+
+
 for dest in TARGETS:
     mirror(SRC, dest)
     print("synced", dest.relative_to(ROOT))
+sync_lite()
+print("synced", LITE.relative_to(ROOT))

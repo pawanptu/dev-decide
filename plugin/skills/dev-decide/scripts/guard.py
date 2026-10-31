@@ -42,9 +42,15 @@ def config(policy):
             "repeat": c.get("repeat", True) is not False, "bash": c.get("bash", True) is not False}
 
 
+def _k(*parts):
+    """The key under which a read is remembered. The lean plugin, which keeps this memory in a file between calls,
+    swaps in a hash so that no path is ever written to disk."""
+    return parts
+
+
 def _trim(d):
     if len(d) > MAX_STATE:
-        for k in sorted(d, key=lambda k: d[k][0] if isinstance(d[k], tuple) else d[k])[:MAX_STATE // 4]:
+        for k in sorted(d, key=lambda k: d[k][0] if isinstance(d[k], (tuple, list)) else d[k])[:MAX_STATE // 4]:
             del d[k]
 
 
@@ -99,12 +105,12 @@ def check(data, cfg, now=None):
         except OSError:
             return None, None
         offset, limit = tin.get("offset"), tin.get("limit")
-        key = (sid, aid, path, offset, limit)
+        key = _k(sid, aid, path, offset, limit)
         if cfg["repeat"]:
             prev = _READS.get(key)
             _READS[key] = (now, st.st_mtime_ns, st.st_size)
             _trim(_READS)
-            if prev and now - prev[0] <= REPEAT_WINDOW_S and prev[1:] == (st.st_mtime_ns, st.st_size) and st.st_size > 2000:
+            if prev and now - prev[0] <= REPEAT_WINDOW_S and tuple(prev[1:]) == (st.st_mtime_ns, st.st_size) and st.st_size > 2000:
                 mins = max(1, int((now - prev[0]) / 60))
                 return out("dev-decide token guard: %s was read %d min ago and has not changed. If that is still in your "
                            "context, use it instead of reading it again." % (os.path.basename(path), mins),
@@ -112,7 +118,7 @@ def check(data, cfg, now=None):
         if limit is None and not offset and st.st_size >= cfg["read_bytes"]:
             tok, note = _big_note(os.path.basename(path), st.st_size, _lines(path, st.st_size))
             if cfg["mode"] == "block_first":
-                akey = (sid, aid, path)
+                akey = _k(sid, aid, path)
                 asked = _ASKED.get(akey)
                 if asked and now - asked <= ASKED_AGAIN_S:
                     _ASKED.pop(akey, None)

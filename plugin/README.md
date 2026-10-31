@@ -31,6 +31,8 @@ Bundles: `pr`, `deploy`, `triage`, `incident`, `plan`, `ai_change`, `agent_relea
 
 Reading a result: `risk 3.0? | needs a human: risk` means a score of 3.0 on a scale of 1 to 5, `?` marks low confidence, and "needs a human" means it abstained so you decide.
 
+The same token guard and savings report are also available as the small `dev-decide-lite` plugin, with no server and no models. Here, `/dev-decide-savings` prints the report and the decision graph page shows it as a card.
+
 ## What the plugin installs
 
 - **Skill** `dev-decide`, in `skills/dev-decide/`.

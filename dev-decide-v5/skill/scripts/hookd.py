@@ -24,6 +24,7 @@ repository; of a prompt only its first 40 characters, keys masked), and draws it
 
   GET /graph        the decision graph page (open http://127.0.0.1:47321/graph in a browser)
   GET /trace        the graph, timeline and totals as JSON (?root=<project folder> or ?project=<id>, &days=1)
+  GET /savings      where the tokens went and what the token guard targets, from the transcripts (?project=<id>, &days=7, &all=1)
   GET /graph.svg    the graph as SVG (&theme=light|dark|auto, &width=960, &header=1 totals and latest, &anim=1), for the side panel
 
 It listens on 127.0.0.1 only and answers no other site's page (a request whose Host is not localhost, or
@@ -165,6 +166,33 @@ def serve():
         root, days = ev.pop("root"), ev.pop("keep_days", traces.KEEP_DAYS)
         traces.record(root, ev, days)
 
+    saved, saved_lock = {}, threading.Lock()  # a transcript scan takes a moment: reuse it for a minute
+
+    def savings_data(q):
+        import savings
+        import traces
+        pid = (q.get("project") or [""])[0]
+        everything = (q.get("all") or ["0"])[0] == "1"
+        try:
+            days = min(max(int((q.get("days") or ["7"])[0]), 1), 90)
+        except ValueError:
+            days = 7
+        projects = traces.projects()
+        if not pid and projects:
+            pid = projects[0]["id"]
+        root = next((p.get("root") for p in projects if p["id"] == pid), None)
+        key = (pid, days, everything)
+        with saved_lock:
+            hit = saved.get(key)
+            if hit and time.monotonic() - hit[0] < 60:
+                return hit[1]
+        rep = savings.report(days, root, everything)
+        with saved_lock:
+            saved[key] = (time.monotonic(), rep)
+            if len(saved) > 50:
+                saved.clear()
+        return rep
+
     def graph_data(q):
         import traces
         projects = traces.projects()
@@ -223,6 +251,8 @@ def serve():
                     traces, projects, pid, days, summ = graph_data(parse_qs(query))
                     return self._send(200, {"projects": projects, "project": pid, "days": days, "summary": summ,
                                             "text": traces.text_tree(summ)}, headers=nocache)
+                if path == "/savings":  # where the tokens went and what the guard targets, from the transcripts
+                    return self._send(200, savings_data(parse_qs(query)), headers=nocache)
                 if path == "/graph.svg":
                     q = parse_qs(query)
                     traces, _, _, _, summ = graph_data(q)

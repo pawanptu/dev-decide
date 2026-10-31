@@ -118,6 +118,16 @@
   @media (max-width:900px) { .grid2 { grid-template-columns:1fr; } }
   .card { background:var(--surface); border:1px solid var(--line); border-radius:var(--r); box-shadow:var(--shadow); min-width:0; margin-bottom:18px; }
   .grid2 .card { margin-bottom:0; }
+  .sav { display:grid; grid-template-columns:minmax(0,1.1fr) minmax(0,1fr); gap:18px 28px; }
+  @media (max-width:900px) { .sav { grid-template-columns:1fr; } }
+  .sav .big { font-size:26px; font-weight:700; letter-spacing:-.025em; line-height:1.15; }
+  .sav .sub { color:var(--muted); font-size:12.5px; margin-top:3px; }
+  .sav .bar { display:grid; grid-template-columns:96px minmax(0,1fr) 44px; gap:10px; align-items:center; font-size:12.5px; color:var(--ink-2); margin-top:10px; }
+  .sav .bar .meter { margin-top:0; }
+  .sav table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  .sav td { padding:5px 0; border-bottom:1px solid var(--line); color:var(--ink-2); }
+  .sav td:not(:first-child) { text-align:right; white-space:nowrap; }
+  .sav .fine { grid-column:1/-1; color:var(--muted); font-size:12px; }
   .card > header { display:flex; align-items:center; gap:10px 14px; padding:14px 18px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
   .card h2 { font-size:15px; margin:0; font-weight:650; letter-spacing:-.01em; }
   .card h2 small { font-weight:500; color:var(--muted); font-size:12.5px; margin-left:6px; }
@@ -336,6 +346,11 @@
   </section>
 
   <section class="tiles" id="tiles" aria-label="Totals"></section>
+
+  <section class="card" id="sav-card">
+    <header><h2>Token savings <small>from your Claude Code transcripts, last 7 days</small></h2><span class="when-chip" id="sav-when"></span></header>
+    <div class="body sav" id="sav-body"><div class="nodata">Counting…</div></div>
+  </section>
 
   <section class="grid2">
     <article class="card replay">
@@ -598,6 +613,38 @@
     var m = box.querySelector(".meter");
     if (!m) { m = el("div", "meter"); m.appendChild(el("i")); box.textContent = ""; box.appendChild(m); }
     requestAnimationFrame(function () { m.firstChild.style.width = Math.round(100 * Math.max(0, Math.min(1, share))) + "%"; });
+  }
+  var SAV = { at: 0, project: null, busy: false };
+  function loadSavings() {
+    var p = S.project || "";
+    if (SAV.busy || (SAV.project === p && Date.now() - SAV.at < 60000)) return;
+    SAV.busy = true;
+    fetch("/savings?days=7&project=" + encodeURIComponent(p), { cache: "no-store" }).then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+      .then(function (rep) { SAV.at = Date.now(); SAV.project = p; SAV.busy = false; renderSavings(rep); })
+      .catch(function () { SAV.busy = false; });
+  }
+  function renderSavings(rep) {
+    var box = $("sav-body"), n = rep.now, b = rep.before, spent = n && n.spent;
+    box.textContent = "";
+    $("sav-when").textContent = n ? plural(n.sessions, "session") + " · " + rep.days + " days" : "";
+    if (!spent) { box.appendChild(el("div", "nodata", "No Claude Code transcripts found for this project in the last " + rep.days + " days, so there is nothing to count yet.")); return; }
+    var pct = function (x) { return x == null ? "n/a" : Math.round(100 * x) + "%"; };
+    var left = el("div");
+    left.appendChild(el("div", "big", tok(n.flagged_tokens) + " tokens"));
+    left.appendChild(el("div", "sub", "came in through reads the token guard speaks up about: " + pct(n.flagged_share) + " of the " + tok(spent.input + spent.cache_write + spent.output) + " new tokens spent"));
+    [["This period", n.flagged_share], ["The days before", b && b.spent ? b.flagged_share : null]].forEach(function (r) {
+      var row = el("div", "bar"), m = el("div"); row.appendChild(el("span", "", r[0])); row.appendChild(m); row.appendChild(el("span", "", pct(r[1]))); meter(m, r[1] || 0); left.appendChild(row);
+    });
+    var right = el("div"), t = el("table"), labels = [["big-file", "Whole reads of files over 40 KB"], ["repeat", "Same file read again, unedited"], ["bash", "git log with no count, cat of a big file"]];
+    labels.forEach(function (l) {
+      var v = n.flagged[l[0]], tr = el("tr");
+      tr.appendChild(el("td", "", l[1])); tr.appendChild(el("td", "", String(v.count))); tr.appendChild(el("td", "", "about " + tok(v.tokens)));
+      t.appendChild(tr);
+    });
+    right.appendChild(t);
+    if (rep.guard_notes != null) right.appendChild(el("div", "sub", "Guard notes given in this period: " + rep.guard_notes));
+    box.appendChild(left); box.appendChild(right);
+    box.appendChild(el("div", "fine", "This is an upper bound on what the guard could save, not a saving: some of those reads were needed, and the guard only advises. A share that falls from the earlier days to this period is the evidence it helps."));
   }
   function renderTiles(s, series, recent) {
     var ser = series || {};
@@ -1268,6 +1315,7 @@
         S.data = data;
         if (!S.project && data.project) S.project = data.project;
         projects(data.projects || [], data.project);
+        loadSavings();
         renderStory(data.summary.stats, data.summary.recent); renderTiles(data.summary.stats, data.summary.series, data.summary.recent);
         if (changed) {
           renderFlow(data, first || opts.full); renderTable(data.summary); renderPrompts(data.summary.timeline || []); renderPlan(data.summary.timeline || []); renderBars(data.summary.nodes || [], data.summary.recent);

@@ -231,6 +231,10 @@ def hint_server():
         code, body, hdr = call("/graph")
         check("decision graph: the page is served with a CSP", code == 200 and "Decision Graph" in body
               and "frame-ancestors 'none'" in (hdr.get("Content-Security-Policy") or ""))
+        code, body, _ = call(q.replace("/trace", "/savings") + "&days=1")
+        check("decision graph: /savings answers with the token report",
+              code == 200 and "flagged_share" in body and call("/savings", headers={"Origin": "https://example.com"})[0] == 403)
+        check("decision graph: the page has a token savings card", "sav-body" in call("/graph")[1])
         code, body, hdr = call(q.replace("/trace", "/graph.svg") + "&theme=dark")
         check("decision graph: the SVG names the agent", code == 200 and body.startswith("<svg") and "db-migrate" in body)
         check("decision graph: other sites' pages are refused",
@@ -872,6 +876,80 @@ def token_savings():
         shutil.rmtree(str(d), ignore_errors=True)
 
 
+def lean_plugin():
+    sys.path.insert(0, str(SCRIPTS))
+    import savings
+    lite = ROOT / "plugin-lite"
+    for rel in (".claude-plugin/plugin.json", "hooks/hooks.json"):
+        try:
+            json.loads((lite / rel).read_text(encoding="utf-8"))
+            check("valid JSON: plugin-lite/%s" % rel, True)
+        except (OSError, ValueError) as exc:
+            check("valid JSON: plugin-lite/%s" % rel, False, str(exc))
+    market = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
+    check("marketplace lists the lean plugin", any(p.get("name") == "dev-decide-lite" and p.get("source") == "./plugin-lite"
+                                                   for p in market.get("plugins", [])))
+    bad = [n for n in ("run.sh", "guard.py", "tokens.py", "savings.py", "lite.py")
+           if not (lite / "scripts" / n).exists() or (lite / "scripts" / n).read_bytes() != (SCRIPTS / n).read_bytes()]
+    check("lean plugin scripts match the engine (run tools/sync.py)", not bad, ", ".join(bad))
+    home = Path(tempfile.mkdtemp(prefix="dd-smoke-lite-"))
+    repo = git_repo()
+    big = repo / "big.py"
+    big.write_text(("x = 1" + chr(10)) * 20000, encoding="utf-8")
+    env = dict(os.environ, HOME=str(home), USERPROFILE=str(home))
+    env.pop("DEV_DECIDE_CHILD", None)
+
+    def hook(file_path, tool_use_id):
+        out = subprocess.run([sys.executable, str(lite / "scripts" / "lite.py")], env=env, capture_output=True, text=True,
+                             encoding="utf-8", timeout=60, input=json.dumps({
+                                 "hook_event_name": "PreToolUse", "tool_name": "Read", "tool_use_id": tool_use_id,
+                                 "session_id": "s1", "cwd": str(repo), "tool_input": {"file_path": file_path}}))
+        return out.stdout.strip()
+    try:
+        first, second = hook(str(big), "a"), hook(str(big), "b")
+        check("lean plugin: a big read gets a note", "big.py" in first and "additionalContext" in first, first[:120])
+        check("lean plugin: the same unchanged file read again is remembered between calls", "read" in second
+              and "min ago" in second, second[:160])
+        state = "".join(f.read_text(encoding="utf-8") for f in (home / ".claude" / "dev-decide" / "guard").glob("*"))
+        check("lean plugin: nothing on disk holds a path", "big.py" not in state and str(repo) not in state and state)
+        (repo / ".claude").mkdir()
+        (repo / ".claude" / "dev-decide.json").write_text(json.dumps({"token_guard": {"enabled": False}}), encoding="utf-8")
+        check("lean plugin: can be turned off in the project", hook(str(big), "c") == "")
+        # a transcript with a big read, the same read again, and a small one, 10 days old and 2 days old
+        proj = home / ".claude" / "projects" / __import__("re").sub(r"[^A-Za-z0-9]", "-", str(repo.resolve()))
+        proj.mkdir(parents=True)
+        rows = []
+        now = time.time()
+        for i, (age, name) in enumerate(((2, "big"), (2, "again"))):
+            ts = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(now - age * 86400 + i))
+            tid = "t%d" % i
+            rows.append({"type": "assistant", "timestamp": ts, "sessionId": "s", "message": {
+                "id": "m%d" % i, "usage": {"input_tokens": 1, "cache_creation_input_tokens": 1000, "cache_read_input_tokens": 0,
+                                           "output_tokens": 10},
+                "content": [{"type": "tool_use", "id": tid, "name": "Read", "input": {"file_path": "/x/big.py"}}]}})
+            rows.append({"type": "user", "timestamp": ts, "message": {"content": [
+                {"type": "tool_result", "tool_use_id": tid, "content": "y" * 80000}]}})
+        (proj / "s.jsonl").write_text(chr(10).join(json.dumps(r) for r in rows) + chr(10), encoding="utf-8")
+        saved = os.environ.get("HOME"), os.environ.get("USERPROFILE")
+        os.environ.update(HOME=str(home), USERPROFILE=str(home))
+        try:
+            rep = savings.report(7, str(repo))
+        finally:
+            for k, v in zip(("HOME", "USERPROFILE"), saved):
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+        f = rep["now"]["flagged"]
+        check("savings: a big read and the same read again are counted from the transcript",
+              f["big-file"]["count"] == 1 and f["repeat"]["count"] == 1 and f["big-file"]["tokens"] == 20000
+              and rep["now"]["spent"]["calls"] == 2, json.dumps(rep["now"])[:300])
+        check("savings: the report says it is an upper bound", "upper bound" in savings.text(rep))
+    finally:
+        shutil.rmtree(str(home), ignore_errors=True)
+        shutil.rmtree(str(repo), ignore_errors=True)
+
+
 def instant_answers():
     sys.path.insert(0, str(SCRIPTS))
     import hook_route
@@ -942,7 +1020,7 @@ def files_hint():
 if __name__ == "__main__":
     for step in (manifests, plugin_in_sync, first_run, hook_writes_nothing, secrets, rollback, routing, short_issues,
                  starter_upgrade, optional_route_model, gate_guesses, limit_messages, other_backends, mcp, state_sync,
-                 option_order_and_audit, hint_learning, decision_graph, token_savings, instant_answers, files_hint, hint_server, server):
+                 option_order_and_audit, hint_learning, decision_graph, token_savings, lean_plugin, instant_answers, files_hint, hint_server, server):
         try:
             step()
         except Exception as exc:

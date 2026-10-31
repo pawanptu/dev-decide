@@ -1,0 +1,13 @@
+{
+  "name": "dev-decide-lite",
+  "version": "0.1.0",
+  "description": "Waste fewer Claude Code tokens. A token guard that notes a whole read of a big file, a re-read of an unchanged file and an unbounded git log before they happen, and /dev-decide-lite:savings, which counts where your tokens went from your own transcripts. Local only, advice only, no server, no model.",
+  "author": {
+    "name": "pawanptu",
+    "url": "https://github.com/pawanptu"
+  },
+  "homepage": "https://github.com/pawanptu/dev-decide",
+  "repository": "https://github.com/pawanptu/dev-decide",
+  "license": "MIT",
+  "keywords": ["tokens", "context", "cost", "guard", "savings"]
+}

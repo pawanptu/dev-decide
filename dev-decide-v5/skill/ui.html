@@ -370,7 +370,7 @@
       </svg>
       Dev Decide
     </a>
-    <div class="links"><a href="#try">Try it</a><a href="#how">How it works</a><a href="#bundles">Decisions</a><a href="#install">Install</a></div>
+    <div class="links"><a href="#try">Try it</a><a href="#how">How it works</a><a href="#bundles">Decisions</a><a href="#tokens">Tokens</a><a href="#install">Install</a></div>
     <button class="btn sm icon" type="button" @click="cycleTheme" :title="themeLabel()" aria-label="Switch theme">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z"/></svg>
     </button>
@@ -715,6 +715,20 @@
   </div>
 </section>
 
+<section id="tokens" style="background:var(--bg2);border-top:1px solid var(--line);border-bottom:1px solid var(--line)">
+  <div class="wrap">
+    <div class="kicker">Tokens</div>
+    <h2>See where your tokens go. Waste fewer.</h2>
+    <p class="sub">Long Claude Code sessions spend most of their tokens on context. A small, local plugin counts yours from the transcripts Claude Code already keeps, and nudges Claude before the wasteful reads. No model call, no server, advice only.</p>
+    <div class="cards">
+      <div class="card"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M9 12l2 2 4-4"/></svg></div><h3>Token guard</h3><p>Before Claude reads a file over 40 KB whole, reads an unchanged file again, or runs <code>git log</code> with no count, it gets a one-line note: use Grep, or read a range.</p></div>
+      <div class="card"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg></div><h3>Savings report</h3><p>Where the last 7 days went (new tokens, cache, output) and how much came in through reads the guard targets, against the 7 days before. Also a card on the decision graph page.</p><div class="row-between"><code>/dev-decide-lite:savings</code></div></div>
+      <div class="card"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div><h3>Honest numbers</h3><p>The report shows an upper bound on what the guard could save, not a promise. Install it, use Claude Code as usual, run the report again: a falling share is the evidence.</p><div class="row-between"><a class="btn sm" href="#install">Install</a></div></div>
+    </div>
+    <div class="src">Local only: it reads transcripts on your machine and keeps only counts, never a path, a command or any text.</div>
+  </div>
+</section>
+
 <section id="install" style="padding-top:20px">
   <div class="wrap">
     <div class="kicker">Install</div>
@@ -726,6 +740,7 @@
           <button type="button" role="tab" @click="set('plugin')" :aria-pressed="is('plugin') ? 'true' : 'false'">Plugin</button>
           <button type="button" role="tab" @click="set('clone')" :aria-pressed="is('clone') ? 'true' : 'false'">From a clone</button>
           <button type="button" role="tab" @click="set('graph')" :aria-pressed="is('graph') ? 'true' : 'false'">Decision graph</button>
+          <button type="button" role="tab" @click="set('lite')" :aria-pressed="is('lite') ? 'true' : 'false'">Lean: tokens only</button>
         </div>
         <div x-show="is('plugin')">
           <p>Starter models, a documented settings file and the routing hint are included.</p>
@@ -737,6 +752,12 @@
           <p>For the HTTP API on your computer, or to choose whether to add the routing hook.</p>
           <div class="cmd"><code>git clone https://github.com/pawanptu/dev-decide</code><button class="copy" type="button" @click="copy('git clone https://github.com/pawanptu/dev-decide')">Copy</button></div>
           <div class="cmd"><code>python3 dev-decide/dev-decide-v5/install.py --router-hook</code><button class="copy" type="button" @click="copy('python3 dev-decide/dev-decide-v5/install.py --router-hook')">Copy</button></div>
+        </div>
+        <div x-show="is('lite')" x-cloak>
+          <p>Only the token guard and the savings report: no skill, no server, no models to load.</p>
+          <div class="cmd slash"><code>/plugin marketplace add pawanptu/dev-decide</code><button class="copy" type="button" @click="copy('/plugin marketplace add pawanptu/dev-decide')">Copy</button></div>
+          <div class="cmd slash"><code>/plugin install dev-decide-lite@dev-decide</code><button class="copy" type="button" @click="copy('/plugin install dev-decide-lite@dev-decide')">Copy</button></div>
+          <div class="cmd slash"><code>/dev-decide-lite:savings</code><button class="copy" type="button" @click="copy('/dev-decide-lite:savings')">Copy</button></div>
         </div>
         <div x-show="is('graph')" x-cloak>
           <p>See which agent or skill was suggested for which task, what Claude really used, and how long each step took.</p>

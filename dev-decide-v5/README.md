@@ -303,6 +303,10 @@ so compare the graph's "Tokens spent" before and after:
 - **Files hint** (`"files_hint": {"enabled": true}`, off, experimental): remembers which project files Claude edited
   after each kind of request and adds them to the hint.
 
+`python3 scripts/savings.py` (also `/dev-decide-savings`, or `/dev-decide-lite:savings` from the lean plugin, and a card
+on the graph page) counts from your transcripts where the last 7 days went and how many tokens came in through reads
+the guard flags, against the 7 days before. It is an upper bound on what the guard could save, not a saving.
+
 dev-decide cannot make Claude's own inference faster or switch the main model from a hook; it only removes steps and
 context.
 

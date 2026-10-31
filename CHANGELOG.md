@@ -3,6 +3,14 @@
 ## Unreleased
 
 ### Added
+- **Lean plugin `dev-decide-lite`**: just the token guard (a command hook, no server, no models; it remembers reads
+  between calls under a hash of the path) and `/dev-decide-lite:savings`. `plugin-lite/scripts/` is copied from the engine
+  by `tools/sync.py`.
+- **Savings report** (`savings.py`, `/dev-decide-savings`, `GET /savings`, and a "Token savings" card on the graph page):
+  counts from Claude Code's own transcripts where the tokens went and how many came in through reads the guard flags,
+  against the previous period. It reports an upper bound, not a saving. On the author's data the flagged share was 2-3%
+  of new tokens, so the guard is a small win for most sessions.
+- The web console has a "Tokens" section and a lean-plugin install tab.
 - **Fewer tokens, measured.** The decision graph now shows the tokens each prompt spent (Claude's own calls from the
   `Stop` hook plus its agents' from `SubagentStop`, read from the counts Claude Code writes in its transcript, deduplicated
   per message; numbers only) and a "Tokens spent" tile. `tokens.py`.

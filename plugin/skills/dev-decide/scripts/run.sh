@@ -10,7 +10,7 @@ for py in python3 python "py -3"; do
   fi
 done
 case "$script" in
-  hook_route.py) exit 0 ;;  # a hook must never break the session
+  hook_route.py|lite.py) exit 0 ;;  # a hook must never break the session
 esac
 echo "Summary: dev-decide error: Python 3.8 or later was not found (tried python3, python, py -3)."
 echo "Reply: tell the user, in one line: dev-decide needs Python 3.8 or later on the PATH."
