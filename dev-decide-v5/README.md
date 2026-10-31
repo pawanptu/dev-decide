@@ -289,6 +289,23 @@ which the `dev-decide-graph` plugin shows as a side panel (`/dev-decide-graph`).
 {"enabled": true, "keep_days": 30, "prompt_chars": 40}`; `DEV_DECIDE_TRACE=0` turns it off, and `serve.py` turns it
 off when it listens beyond localhost.
 
+### Saving tokens
+
+The graph also shows what each prompt cost in tokens (new tokens = input + cache writes + output, from the counts
+Claude Code already writes in its transcript). Three opt-in or advisory helpers aim to lower it; none is benchmarked,
+so compare the graph's "Tokens spent" before and after:
+
+- **Token guard** (`"token_guard"`, on, advice only): a `PreToolUse` hook on `Read` and `Bash` that notes a whole read of
+  a file over `read_bytes` (40000), a re-read of an unchanged file, `git log` with no count and `cat` of a big file.
+  `"mode": "block_first"` refuses the first big read once (Claude sees why and may read again). Local rules, no model.
+- **Instant answers** (`"instant": {"enabled": true}`, off): a prompt starting with `/dev-decide ` is answered by the
+  engine from the hint server and never reaches Claude, so that turn spends no tokens. Claude does not see the answer.
+- **Files hint** (`"files_hint": {"enabled": true}`, off, experimental): remembers which project files Claude edited
+  after each kind of request and adds them to the hint.
+
+dev-decide cannot make Claude's own inference faster or switch the main model from a hook; it only removes steps and
+context.
+
 Without a trained route model, matching blends words (TF-IDF) with meaning (the bundled embedding model) and with
 technical areas (postgres, column and schema count as "database"; css and button as "frontend"), so a request can
 match a skill it shares no words with. Measured on the kit's 351 labeled routing requests (`tools/eval_router.py`;

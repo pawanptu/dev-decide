@@ -3,6 +3,20 @@
 ## Unreleased
 
 ### Added
+- **Fewer tokens, measured.** The decision graph now shows the tokens each prompt spent (Claude's own calls from the
+  `Stop` hook plus its agents' from `SubagentStop`, read from the counts Claude Code writes in its transcript, deduplicated
+  per message; numbers only) and a "Tokens spent" tile. `tokens.py`.
+- **Token guard** (`guard.py`, a `PreToolUse` hook on `Read|Bash`, local rules, no model): notes a whole read of a file
+  over 40 KB, a re-read of an unchanged file, `git log` with no count and `cat` of a big file. Advises by default;
+  `"token_guard": {"mode": "block_first"}` refuses the first big read once. Records only the rule and a token estimate.
+  Whether it saves tokens is for the graph's numbers to show: it was not benchmarked.
+- **Instant answers** (off by default): `"instant": {"enabled": true}` answers prompts that start with `/dev-decide `
+  from the local engine, so that turn spends no Claude tokens (a second `UserPromptSubmit` hook, `/instant`).
+- **Files hint** (experimental, off by default): `"files_hint": {"enabled": true}` adds "After similar requests here
+  you edited: ..." from a per-project memory of relative paths and meaning vectors.
+- Hints now say "closest agent is ..." in fewer words, and an `Explore` or `Plan` hint adds that delegating keeps file
+  reads out of the main context. The `/dev-decide` skill's listing text (loaded every session) is about 780 characters
+  shorter.
 - **The routing hint learns what Claude really runs.** When Claude runs an agent or skill after a prompt, the hint
   server keeps the prompt's meaning vector (never its text) and the agent's name, per project, outside the
   repository (`~/.claude/dev-decide/traces/usage/`). A later request that means much the same, with at least 3

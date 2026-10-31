@@ -18,10 +18,11 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 SRC = HERE / "skill"
-HOOK_MARKS = ("hook_route.py", "hookd.py", ":47321/route", ":47321/tool", ":47321/agent", ":47321/turn", ":47321/task")  # every form of the routing hint, old and new
-HOOK_EVENTS = ("UserPromptSubmit", "SessionStart", "PostToolUse", "SubagentStart", "SubagentStop", "Stop", "TaskCreated",
-               "TaskCompleted")
-USED_TOOLS = "Agent|Skill|TodoWrite"  # what Claude really used, for the decision graph
+HOOK_MARKS = ("hook_route.py", "hookd.py", ":47321/route", ":47321/tool", ":47321/agent", ":47321/turn", ":47321/task", ":47321/guard", ":47321/instant")  # every form of the routing hint, old and new
+HOOK_EVENTS = ("UserPromptSubmit", "SessionStart", "PreToolUse", "PostToolUse", "SubagentStart", "SubagentStop", "Stop",
+               "TaskCreated", "TaskCompleted")
+USED_TOOLS = "Agent|Skill|TodoWrite|Edit|Write|MultiEdit|NotebookEdit"  # what Claude really used, for the decision graph (edits: only for the experimental files hint)
+GUARD_TOOLS = "Read|Bash"  # the token guard's notes, before a wasteful read
 HOOK_PORT = 47321
 
 
@@ -158,6 +159,8 @@ def main():
         if args.router_hook == "command":
             cmd = '%s "%s"' % (py, (scripts / "hook_route.py").as_posix())
             hooks.setdefault("UserPromptSubmit", []).append({"hooks": [{"type": "command", "command": cmd, "timeout": 5}]})
+            hooks.setdefault("PreToolUse", []).append(
+                {"matcher": GUARD_TOOLS, "hooks": [{"type": "command", "command": cmd, "timeout": 5}]})
             hooks.setdefault("PostToolUse", []).append(
                 {"matcher": USED_TOOLS, "hooks": [{"type": "command", "command": cmd, "timeout": 5}]})
             hooks.setdefault("SubagentStop", []).append({"hooks": [{"type": "command", "command": cmd, "timeout": 5}]})
@@ -168,6 +171,11 @@ def main():
             hooks.setdefault("SessionStart", []).append({"hooks": [{"type": "command", "command": cmd, "timeout": 10}]})
             hooks.setdefault("UserPromptSubmit", []).append(
                 {"hooks": [{"type": "http", "url": "http://127.0.0.1:%d/route" % HOOK_PORT, "timeout": 2}]})
+            hooks.setdefault("UserPromptSubmit", []).append(  # answers "/dev-decide ..." itself when "instant" is on
+                {"hooks": [{"type": "http", "url": "http://127.0.0.1:%d/instant" % HOOK_PORT, "timeout": 60}]})
+            hooks.setdefault("PreToolUse", []).append(  # a note before a big whole-file read or an unbounded command
+                {"matcher": GUARD_TOOLS, "hooks": [{"type": "http", "url": "http://127.0.0.1:%d/guard" % HOOK_PORT,
+                                                    "timeout": 2}]})
             hooks.setdefault("PostToolUse", []).append(
                 {"matcher": USED_TOOLS, "hooks": [{"type": "http", "url": "http://127.0.0.1:%d/tool" % HOOK_PORT,
                                                    "timeout": 2}]})

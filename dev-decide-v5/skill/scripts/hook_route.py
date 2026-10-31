@@ -5,8 +5,8 @@ Installed only with `install.py --router-hook`. For every prompt it scores your 
 and skills, Claude Code's built-in agents (Explore, Plan, general-purpose) included, and
 only when the match is clear adds one line of context such as:
 
-  dev-decide routing hint: this request most closely matches the skill `db-migrate`
-  (Write and review Prisma database migrations safely); match confidence 0.86.
+  dev-decide routing hint: closest skill is `db-migrate`
+  (Write and review Prisma database migrations safely) (confidence 0.86).
 
 What decides, in order: what Claude ran after similar prompts in this project (usage.py,
 the hint server only), the trained route model, then zero-shot matching on names and
@@ -22,7 +22,9 @@ time, the task's type and area, and the prompt's first 40 characters) in
 ~/.claude/dev-decide/traces (see traces.py); "decision_graph": {"enabled": false} turns
 that off, "prompt_chars": 0 keeps no prompt text. As a PostToolUse hook it notes the
 agent or skill Claude ran; as a SubagentStop hook, how long an agent really ran; as a Stop
-hook, how long the reply took and which tools Claude used (names and counts only).
+hook, how long the reply took, which tools Claude used (names and counts only) and the tokens it spent (the
+counts Claude Code already writes in its transcript, never text). As a PreToolUse hook it runs the token
+guard (guard.py).
 """
 import datetime
 import json
@@ -45,6 +47,9 @@ class _Hint(object):
 
     def __init__(self, probs):
         self.probs = probs
+
+
+SEARCH_AGENTS = ("Explore", "Plan")  # built-in agents that read many files and return only a conclusion
 
 
 def _ms(t0):
@@ -156,6 +161,30 @@ def _decide(text, routes, root, policy, cfg, memory=True):
 
 
 def explain(data):
+    """(the hook's JSON output for one prompt or None to stay silent, the trace event or None). The routing hint
+    (_explain) plus, when "files_hint" is on, a line naming the files edited after similar requests."""
+    out, ev = _explain(data)
+    raw = data.get("prompt") or ""
+    prompt = user_text(raw)
+    if (ev or {}).get("skipped") or not prompt or automated(raw) or prompt.startswith("/") \
+            or not 4 <= len(prompt.split()) or len(prompt) > 4000:
+        return out, ev
+    try:
+        import ddcore as dd
+        root = dd.project_root(data.get("cwd") or None)
+        line = files_note(root, dd.load_policy(root), prompt)
+    except Exception:
+        line = None
+    if line:
+        hook = (out or {}).get("hookSpecificOutput") or {"hookEventName": "UserPromptSubmit", "additionalContext": ""}
+        hook["additionalContext"] = (hook["additionalContext"] + " " + line).strip()
+        out = {"hookSpecificOutput": hook}
+        if ev is not None:
+            ev["files_hint"] = True
+    return out, ev
+
+
+def _explain(data):
     """(the hook's JSON output for one prompt or None to stay silent, the trace event or None). The event holds
     no prompt text; note() adds the task's labels and stores it. Shared with hookd.py."""
     t0 = time.perf_counter()
@@ -213,8 +242,9 @@ def explain(data):
     if route is None:
         return done(None, steps=steps, decided_by=None, hint=None, options=len(routes))
     desc = (" (%s)" % route["description"][:120]) if route.get("description") else ""
-    context = ("dev-decide routing hint: this request most closely matches the %s `%s`%s; match confidence %.2f."
-               % (route["kind"], name, desc, conf))
+    context = ("dev-decide routing hint: closest %s is `%s`%s (confidence %.2f)." % (route["kind"], name, desc, conf))
+    if name in SEARCH_AGENTS:  # an agent's file reads stay out of the main conversation: that is the token saving
+        context += " Delegating keeps its file reads out of your context."
     if decided == "your past sessions":
         context += " Claude ran it after similar requests in this project."
     out = {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": context}}
@@ -385,6 +415,73 @@ def learn_use(data, prompt, hinted_at):
         usage.record(root, m.encode(prompt), name)
 
 
+EDIT_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")
+_FILES_SEEN = set()
+_SECRET_FILE = re.compile(r"(^|[/\\._-])(env|secret|secrets|credential|credentials|token|tokens|password|passwords|"
+                          r"id_rsa|id_ed25519|pem|key|keys|pfx|p12|kdbx|htpasswd|netrc|npmrc|pypirc)($|[/\\._-])", re.I)
+
+
+def files_enabled(policy):
+    cfg = policy.get("files_hint")
+    return isinstance(cfg, dict) and cfg.get("enabled") is True and usage_enabled(policy)
+
+
+def usage_enabled(policy):
+    import usage
+    return usage.enabled(policy)
+
+
+def learn_files(data, prompt, hinted_at):
+    """Experimental ("files_hint": {"enabled": true}). Teach the usage memory that this session's latest prompt led
+    Claude to edit the file in this PostToolUse input (Edit, Write, ...). Only the file's path relative to the project
+    is kept, with the prompt's meaning vector, never any text; files outside the project, in .git, or with a name
+    that suggests a secret (.env, keys, tokens, credentials) are never kept."""
+    if data.get("tool_name") not in EDIT_TOOLS or time.time() - hinted_at > LEARN_WINDOW_S:
+        return
+    tin = data.get("tool_input") if isinstance(data.get("tool_input"), dict) else {}
+    target = tin.get("file_path") or tin.get("notebook_path")
+    if not isinstance(target, str) or not target:
+        return
+    import ddcore as dd
+    import router
+    import usage
+
+    root = dd.project_root(data.get("cwd") or None)
+    policy = dd.load_policy(root)
+    if not files_enabled(policy):
+        return
+    try:
+        rel = os.path.relpath(os.path.join(str(data.get("cwd") or root), target), str(root)).replace(os.sep, "/")
+    except ValueError:
+        return
+    if rel.startswith("..") or rel.split("/")[0] == ".git" or len(rel) > 200 or _SECRET_FILE.search(rel):
+        return
+    if (hinted_at, rel) in _FILES_SEEN:  # one lesson per prompt and file, however many edits it took
+        return
+    m = router._meaning_model()
+    if m is not None:
+        _FILES_SEEN.add((hinted_at, rel))
+        if len(_FILES_SEEN) > 5000:
+            _FILES_SEEN.clear()
+        usage.record(root, m.encode(prompt), rel, ".files")
+
+
+def files_note(root, policy, prompt):
+    """A line naming the files Claude edited after similar past prompts here, or None. Experimental, off by default."""
+    if not files_enabled(policy):
+        return None
+    import router
+    import usage
+
+    m = router._meaning_model()
+    if m is None:
+        return None
+    found = [(f, n) for f, n in usage.suggest_files(root, m.encode(prompt)) if os.path.isfile(os.path.join(str(root), f))]
+    if not found:
+        return None
+    return "After similar requests here you edited: %s." % ", ".join(f for f, _ in found)
+
+
 def _iso_ms(stamp):
     return datetime.datetime.strptime(stamp.replace("Z", "+0000"), "%Y-%m-%dT%H:%M:%S.%f%z").timestamp() * 1000
 
@@ -402,16 +499,19 @@ def ran(data):
     policy = dd.load_policy(root)
     if not traces.enabled(policy):
         return
-    ms, tools = None, {}
+    ms, tools, used_tokens = None, {}, None
     try:
         with open(str(data.get("agent_transcript_path") or ""), encoding="utf-8") as fh:
             first = json.loads(fh.readline())
         ms = max(0, int(time.time() * 1000 - _iso_ms(first["timestamp"])))
-        tools = _tools_after(str(data.get("agent_transcript_path")), 0)
+        import tokens
+        rows = _tail_rows(str(data.get("agent_transcript_path")))
+        tools, used_tokens = _count_tools(rows), tokens.count(rows)
     except Exception:
         pass
     traces.record(root, {"kind": "ran", "session": data.get("session_id") or None, "agent_id": data.get("agent_id") or None,
-                         "prompt_id": data.get("prompt_id") or None, "name": name.strip()[:80], "ms": ms, "tools": tools},
+                         "prompt_id": data.get("prompt_id") or None, "name": name.strip()[:80], "ms": ms, "tools": tools,
+                         "tokens": used_tokens},
                   traces.keep_days(policy))
 
 
@@ -501,10 +601,68 @@ def turn(data):
         began = _iso_ms(rows[start]["timestamp"])
     except (KeyError, ValueError):
         return
+    reply = rows[start + 1:]
+    import tokens
     traces.record(root, {"kind": "turn", "session": data.get("session_id") or None,
                          "prompt_id": rows[start].get("promptId") or data.get("prompt_id") or None, "prompt_ts": int(began),
-                         "ms": max(0, int(time.time() * 1000 - began)), "tools": _count_tools(rows[start + 1:])},
+                         "ms": max(0, int(time.time() * 1000 - began)), "tools": _count_tools(reply),
+                         # an agent's own calls are counted from its transcript (ran), not twice
+                         "tokens": tokens.count([r for r in reply if not r.get("isSidechain")])},
                   traces.keep_days(policy))
+
+
+INSTANT_TIMEOUT_S = 50
+_INSTANT = re.compile(r"/(?:dev-decide:)?dev-decide\s+(.+)\Z", re.S)
+
+
+def instant(data):
+    """A UserPromptSubmit hook input -> the hook's JSON output for a prompt that starts with `/dev-decide `, answered
+    here instead of by Claude (so that turn costs no model tokens), or None to let Claude handle the prompt as usual.
+    Off unless "instant": {"enabled": true} is set; it runs the engine as `decide.py --summary` (the same local rules
+    and, when needed, the same one model call as the skill) and shows the one-line answer to the person."""
+    prompt = data.get("prompt")
+    m = _INSTANT.match(prompt.strip()) if isinstance(prompt, str) else None
+    if not m or len(prompt) > 20000:
+        return None
+    import ddcore as dd
+    import subprocess
+
+    root = dd.project_root(data.get("cwd") or None)
+    cfg = dd.load_policy(root).get("instant")
+    if not isinstance(cfg, dict) or cfg.get("enabled") is not True:
+        return None
+    cwd = str(root) if os.path.isdir(str(root)) else None
+    try:
+        p = subprocess.run([sys.executable, str(Path(__file__).resolve().parent / "decide.py"), "--summary", "--cwd",
+                            cwd or ".", "-"], input=m.group(1).strip(), capture_output=True, text=True, cwd=cwd,
+                           timeout=INSTANT_TIMEOUT_S, env=dict(os.environ, DEV_DECIDE_CHILD="1"))
+    except (OSError, subprocess.SubprocessError):
+        return None
+    answer = (p.stdout or "").strip()
+    if p.returncode != 0 or not answer or answer.startswith("dev-decide error") or re.search(r"\| [\w.]+ error", answer):
+        return None  # anything unexpected: let Claude run the skill as usual
+    return {"decision": "block", "reason": "dev-decide answered this itself, so Claude was not used (no tokens spent): " + answer,
+            "hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "suppressOriginalPrompt": True}}
+
+
+def guard(data):
+    """A PreToolUse hook input -> (the hook's JSON output or None, a trace event or None): a note before a wasteful
+    Read or Bash call (see guard.py). Never raises into the caller's answer: any failure means "no opinion"."""
+    import ddcore as dd
+    import guard as token_guard
+    import traces
+
+    root = dd.project_root(data.get("cwd") or None)
+    policy = dd.load_policy(root)
+    cfg = token_guard.config(policy)
+    if not cfg["enabled"]:
+        return None, None
+    out, ev = token_guard.check(data, cfg)
+    if ev and traces.enabled(policy):
+        ev = dict(ev, root=str(root), keep_days=traces.keep_days(policy))
+    else:
+        ev = None
+    return out, ev
 
 
 def _count_tools(rows):
@@ -518,8 +676,8 @@ def _count_tools(rows):
     return dict(tools.most_common(20))
 
 
-def _tools_after(path, start):
-    """Tool names and counts in a transcript's tail (an agent's whole transcript, usually)."""
+def _tail_rows(path):
+    """The parsed lines of a transcript's tail (an agent's whole transcript, usually)."""
     with open(path, "rb") as fh:
         fh.seek(0, 2)
         size = fh.tell()
@@ -531,7 +689,12 @@ def _tools_after(path, start):
             rows.append(json.loads(line))
         except ValueError:
             pass
-    return _count_tools(rows[start:])
+    return rows
+
+
+def _tools_after(path, start):
+    """Tool names and counts in a transcript's tail (an agent's whole transcript, usually)."""
+    return _count_tools(_tail_rows(path)[start:])
 
 
 def main():
@@ -544,6 +707,17 @@ def main():
     if not isinstance(data, dict):
         return
     event = data.get("hook_event_name")
+    if event == "PreToolUse":  # command form: no memory between calls, so only the rules that need none
+        out, ev = guard(data)
+        if out:
+            print(json.dumps(out))
+            sys.stdout.flush()
+        if ev:
+            import traces
+            ev = dict(ev)
+            root, days = ev.pop("root"), ev.pop("keep_days", traces.KEEP_DAYS)
+            traces.record(root, ev, days)
+        return
     if event == "PostToolUse":
         return used(data)
     if event == "SubagentStop":
@@ -554,6 +728,11 @@ def main():
         return task(data)
     if event == "Stop":
         return turn(data)
+    out = instant(data)
+    if out:
+        print(json.dumps(out))
+        sys.stdout.flush()
+        return
     out, ev = explain(data)
     if out:
         print(json.dumps(out))

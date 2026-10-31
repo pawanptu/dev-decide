@@ -31,14 +31,14 @@ def enabled(policy):
     return (policy.get("router_hook") or {}).get("learn", True) is not False and traces.enabled(policy)
 
 
-def path(root):
-    return traces.folder() / "usage" / ("%s.jsonl" % traces.slug(root))
+def path(root, kind=""):
+    return traces.folder() / "usage" / ("%s%s.jsonl" % (traces.slug(root), kind))
 
 
-def record(root, vector, name):
-    """Remember that a prompt meaning `vector` led Claude to run `name`. Never raises."""
+def record(root, vector, name, kind=""):
+    """Remember that a prompt meaning `vector` led Claude to run `name` (kind ".files": to edit that file). Never raises."""
     try:
-        p = path(root)
+        p = path(root, kind)
         row = json.dumps({"ts": int(time.time() * 1000), "name": name, "v": [round(x, 4) for x in vector]},
                          separators=(",", ":")) + "\n"
         with _LOCK:
@@ -54,8 +54,8 @@ def record(root, vector, name):
         pass
 
 
-def _rows(root):
-    p = path(root)
+def _rows(root, kind=""):
+    p = path(root, kind)
     try:
         mtime = p.stat().st_mtime
     except OSError:
@@ -101,3 +101,18 @@ def suggest(root, vector, candidates):
         return None
     conf = len(ss) / float(len(near)) * (sum(ss) / len(ss))
     return name, round(conf, 3), len(near)
+
+
+def suggest_files(root, vector, limit=3):
+    """The files Claude edited after similar past prompts: up to `limit` (relative path, votes), when at least
+    MIN_VOTES of the NEIGHBOURS most similar past edits (similarity >= MIN_SIMILARITY) name the same file."""
+    sims = []
+    for name, v in _rows(root, ".files"):
+        s = sum(a * b for a, b in zip(vector, v))
+        if s >= MIN_SIMILARITY:
+            sims.append((s, name))
+    sims.sort(reverse=True)
+    votes = {}
+    for s, name in sims[:NEIGHBOURS * 3]:
+        votes[name] = votes.get(name, 0) + 1
+    return sorted(((n, c) for n, c in votes.items() if c >= MIN_VOTES), key=lambda x: -x[1])[:limit]

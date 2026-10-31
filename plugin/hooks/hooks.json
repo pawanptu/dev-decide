@@ -20,11 +20,32 @@
             "timeout": 2
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://127.0.0.1:47321/instant",
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Read|Bash",
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://127.0.0.1:47321/guard",
+            "timeout": 2
+          }
+        ]
       }
     ],
     "PostToolUse": [
       {
-        "matcher": "Agent|Skill|TodoWrite",
+        "matcher": "Agent|Skill|TodoWrite|Edit|Write|MultiEdit|NotebookEdit",
         "hooks": [
           {
             "type": "http",

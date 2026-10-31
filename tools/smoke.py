@@ -785,10 +785,164 @@ def server():
         shutil.rmtree(str(repo), ignore_errors=True)
 
 
+def token_savings():
+    sys.path.insert(0, str(SCRIPTS))
+    import guard
+    import tokens
+    import traces
+    use = {"input_tokens": 3, "cache_creation_input_tokens": 100, "cache_read_input_tokens": 50, "output_tokens": 5}
+    rows = [{"type": "assistant", "message": {"id": "m1", "usage": dict(use)}},  # one message, written as two lines
+            {"type": "assistant", "message": {"id": "m1", "usage": dict(use, output_tokens=40)}},
+            {"type": "assistant", "message": {"id": "m2", "model": "<synthetic>", "usage": dict(use)}},
+            {"type": "assistant", "message": {"id": "m3", "usage": dict(use)}}, {"type": "user", "message": {}}]
+    t = tokens.count(rows)
+    check("tokens: a message written as several lines is counted once, synthetic ones not at all",
+          t == {"input": 6, "cache_write": 200, "cache_read": 100, "output": 45, "calls": 2}, str(t))
+    check("tokens: no assistant message gives no count", tokens.count([{"type": "user"}]) is None)
+    ev = [{"kind": "hint", "ts": 1000, "session": "s", "prompt_id": "p1", "hint": None},
+          {"kind": "turn", "ts": 5000, "session": "s", "prompt_id": "p1", "prompt_ts": 1000, "ms": 4000, "tools": {},
+           "tokens": t},
+          {"kind": "guard", "ts": 2000, "rule": "big-file", "tool": "Read", "tokens": 9000}, {"kind": "turn", "ts": 9}]
+    st = traces.summary(ev)["stats"]
+    check("decision graph: tokens per prompt and the guard's notes are totalled",
+          (st.get("tokens") or {}).get("fresh") == 251 and (st.get("guard") or {}).get("notes") == 1
+          and st["guard"]["at_stake"] == 9000, json.dumps({k: st.get(k) for k in ("tokens", "guard")}))
+    d = Path(tempfile.mkdtemp(prefix="dd-smoke-guard-"))
+    try:
+        big, small = d / "big.py", d / "small.py"
+        big.write_text(("x = 1" + chr(10)) * 20000, encoding="utf-8")
+        small.write_text(("x = 1" + chr(10)) * 10, encoding="utf-8")
+        cfg = guard.config({})
+
+        def run(tool, config=cfg, sid="s", **tin):
+            return guard.check({"tool_name": tool, "tool_input": tin, "cwd": str(d), "session_id": sid}, config)
+        out, ev1 = run("Read", file_path=str(big))
+        note = ((out or {}).get("hookSpecificOutput") or {}).get("additionalContext", "")
+        check("token guard: a whole read of a big file gets a note and the read still goes ahead",
+              "big.py" in note and "Grep" in note and (ev1 or {}).get("rule") == "big-file" and "permissionDecision" not in str(out))
+        check("token guard: a read of the same unchanged file again is noted",
+              (run("Read", file_path=str(big))[1] or {}).get("rule") == "re-read")
+        check("token guard: a bounded read and a small file are left alone",
+              run("Read", file_path=str(big), limit=50, sid="t")[0] is None and run("Read", file_path=str(small))[0] is None)
+        check("token guard: git log with no count is noted, with a count it is not",
+              (run("Bash", command="git log")[1] or {}).get("rule") == "unbounded-log"
+              and run("Bash", command="git log -n 5")[0] is None and run("Bash", command="git log --oneline | head")[0] is None)
+        check("token guard: cat of a big file is noted; a compound command is not judged",
+              (run("Bash", command="cat big.py")[1] or {}).get("rule") == "cat-big-file"
+              and run("Bash", command="cat big.py; echo done")[0] is None)
+        check("token guard: the event holds no path and no command",
+              all(str(d) not in json.dumps(e) and "big.py" not in json.dumps(e) for e in (ev1,)))
+        first = guard.config({"token_guard": {"mode": "block_first"}})
+        a = run("Read", first, "b", file_path=str(big))[0]
+        b = run("Read", first, "b", file_path=str(big))[0]
+        check("token guard: block_first refuses the first big read once and lets the retry through",
+              ((a or {}).get("hookSpecificOutput") or {}).get("permissionDecision") == "deny" and b is None, str((a, b)))
+        off = guard.config({"token_guard": {"enabled": False}})
+        check("token guard: can be turned off", off["enabled"] is False)
+        hooks = json.loads((ROOT / "plugin" / "hooks" / "hooks.json").read_text(encoding="utf-8"))["hooks"]
+        pre = json.dumps(hooks.get("PreToolUse"))
+        check("token guard: the plugin registers it for Read and Bash only", '"Read|Bash"' in pre and ":47321/guard" in pre)
+        port = _free_port()
+        env = dict(ENV, DEV_DECIDE_HOOK_PORT=str(port))
+        subprocess.run([sys.executable, str(SCRIPTS / "hookd.py"), "--ensure"], env=env, timeout=60)
+        repo = git_repo()
+        try:
+            def post(path, data):
+                req = urllib.request.Request("http://127.0.0.1:%d%s" % (port, path), data=json.dumps(data).encode(), method="POST")
+                with urllib.request.urlopen(req, timeout=30) as r:
+                    return r.read().decode("utf-8")
+            body = post("/guard", {"hook_event_name": "PreToolUse", "tool_name": "Read", "tool_use_id": "g1", "session_id": "q",
+                                   "cwd": str(repo), "tool_input": {"file_path": str(big)}})
+            check("hint server: /guard answers a note for a big read",
+                  "additionalContext" in body and "big.py" in body, body[:120])
+            check("hint server: /guard stays silent for the same tool use arriving twice",
+                  post("/guard", {"hook_event_name": "PreToolUse", "tool_name": "Read", "tool_use_id": "g1", "session_id": "q",
+                                  "cwd": str(repo), "tool_input": {"file_path": str(big)}}) == "")
+            check("hint server: /guard stays silent about a small file",
+                  post("/guard", {"tool_name": "Read", "tool_use_id": "g2", "cwd": str(repo),
+                                  "tool_input": {"file_path": str(small)}}) == "")
+            time.sleep(1.5)
+            raw = "".join(f.read_text(encoding="utf-8") for f in TRACES.glob("*.jsonl"))
+            check("token guard: the trace keeps the rule and a token estimate, never the path",
+                  '"rule":"big-file"' in raw and "big.py" not in raw and str(d) not in raw)
+        finally:
+            subprocess.run([sys.executable, str(SCRIPTS / "hookd.py"), "--stop"], env=env, timeout=30)
+            shutil.rmtree(str(repo), ignore_errors=True)
+    finally:
+        shutil.rmtree(str(d), ignore_errors=True)
+
+
+def instant_answers():
+    sys.path.insert(0, str(SCRIPTS))
+    import hook_route
+    repo = git_repo()
+    saved = dict(os.environ)
+    os.environ.update(DEV_DECIDE_BACKEND="none", DEV_DECIDE_ESCALATE="0", HOME=str(repo), USERPROFILE=str(repo))
+    try:
+        ask = {"prompt": "/dev-decide status", "cwd": str(repo)}
+        check("instant: off unless the setting is on", hook_route.instant(ask) is None)
+        (repo / ".claude").mkdir()
+        (repo / ".claude" / "dev-decide.json").write_text(json.dumps({"instant": {"enabled": True}}), encoding="utf-8")
+        out = hook_route.instant(ask) or {}
+        check("instant: a /dev-decide prompt is answered without Claude", out.get("decision") == "block"
+              and "dev-decide learning" in out.get("reason", ""), str(out)[:160])
+        check("instant: other prompts and failed answers go on to Claude",
+              hook_route.instant({"prompt": "fix the login button please", "cwd": str(repo)}) is None
+              and hook_route.instant({"prompt": "/dev-decide risk :: drop the users table", "cwd": str(repo)}) is None)
+        hooks = json.dumps(json.loads((ROOT / "plugin" / "hooks" / "hooks.json").read_text(encoding="utf-8"))["hooks"])
+        check("instant: the plugin registers its hook with a long timeout", ":47321/instant" in hooks)
+    finally:
+        os.environ.clear()
+        os.environ.update(saved)
+        shutil.rmtree(str(repo), ignore_errors=True)
+
+
+def files_hint():
+    sys.path.insert(0, str(SCRIPTS))
+    import hook_route
+    repo = git_repo()
+    try:
+        (repo / "src").mkdir()
+        for name in ("a.py", "keys.py"):
+            (repo / "src" / name).write_text("x = 1", encoding="utf-8")
+        (repo / ".claude").mkdir()
+        ask = "add a retry with backoff to the payment webhook handler"
+        now = time.time()
+
+        def edit(rel, at):
+            hook_route.learn_files({"tool_name": "Edit", "cwd": str(repo), "session_id": "f",
+                                    "tool_input": {"file_path": str(repo / rel)}}, ask, at)
+        for i in range(4):  # four earlier prompts of this kind, each editing a.py (and one touching a secret-looking file)
+            edit("src/a.py", now - 10 - i)
+            edit("src/a.py", now - 10 - i)  # a second edit in the same prompt adds no vote
+            edit("src/keys.py", now - 10 - i)
+        edit("../outside.py", now)
+        hint = lambda: ((hook_route.explain({"prompt": ask, "cwd": str(repo)})[0] or {}).get("hookSpecificOutput") or {}
+                        ).get("additionalContext", "")
+        check("files hint: off by default, nothing is remembered", "edited" not in hint())
+        (repo / ".claude" / "dev-decide.json").write_text(json.dumps({"files_hint": {"enabled": True}}), encoding="utf-8")
+        for i in range(4):
+            edit("src/a.py", now - 20 - i)
+            edit("src/a.py", now - 20 - i)
+            edit("src/keys.py", now - 20 - i)
+        edit("../outside.py", now)
+        line = hint()
+        check("files hint: the file edited after similar requests is named", "src/a.py" in line, line[:160])
+        check("files hint: secret-looking names and files outside the project are never kept",
+              "keys.py" not in line and "outside" not in line
+              and "keys.py" not in "".join(f.read_text(encoding="utf-8") for f in TRACES.glob("usage/*.jsonl")))
+        check("files hint: a different kind of request gets no files",
+              "edited" not in ((hook_route.explain({"prompt": "translate the readme into french and spanish please",
+                                                    "cwd": str(repo)})[0] or {}).get("hookSpecificOutput") or {}
+                               ).get("additionalContext", ""))
+    finally:
+        shutil.rmtree(str(repo), ignore_errors=True)
+
+
 if __name__ == "__main__":
     for step in (manifests, plugin_in_sync, first_run, hook_writes_nothing, secrets, rollback, routing, short_issues,
                  starter_upgrade, optional_route_model, gate_guesses, limit_messages, other_backends, mcp, state_sync,
-                 option_order_and_audit, hint_learning, decision_graph, hint_server, server):
+                 option_order_and_audit, hint_learning, decision_graph, token_savings, instant_answers, files_hint, hint_server, server):
         try:
             step()
         except Exception as exc:

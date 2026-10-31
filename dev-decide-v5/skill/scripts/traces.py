@@ -213,13 +213,13 @@ def _with_run_times(events):
                          and (u.get("session") or "") == (r.get("session") or "") and abs(u["start"] - began) <= 60000]
         if cands:
             u = min(cands, key=lambda u: abs(u["start"] - began))
-            u["ms"], u["ran"], u["tools"] = r.get("ms"), True, r.get("tools") or {}
+            u["ms"], u["ran"], u["tools"], u["tokens"] = r.get("ms"), True, r.get("tools") or {}, r.get("tokens")
             u["child_id"] = u.get("child_id") or r.get("agent_id")
         else:  # an agent no PostToolUse reported (one started by another agent, say)
             began = r.get("ts", 0) - int(r.get("ms") or 0)
             used.append({"kind": "used", "tool": "Agent", "name": r.get("name"), "session": r.get("session"),
                          "prompt_id": r.get("prompt_id"), "ts": began, "start": began, "ms": r.get("ms"), "ran": True,
-                         "child_id": r.get("agent_id"), "tools": r.get("tools") or {}})
+                         "child_id": r.get("agent_id"), "tools": r.get("tools") or {}, "tokens": r.get("tokens")})
     for u in used:
         if u.get("tool") == "Agent" and not u.get("ran") and (u.get("ms") or 0) < 1000:
             u["ms"] = None  # the launch of a background agent, not how long it ran
@@ -322,6 +322,29 @@ def _plan(prompt, rows, tasks, turn):
     if any(x["running"] for x in out) or any(not st["completed"] for st in steps):
         ends.append(now)
     return {"start": prompt.get("ts", 0), "end": max(ends + [prompt.get("ts", 0) + 1]), "steps": steps, "uses": out}
+
+
+def _count_by(rows, key):
+    out = {}
+    for r in rows:
+        k = str(r.get(key) or "?")
+        out[k] = out.get(k, 0) + 1
+    return out
+
+
+def _prompt_tokens(turn, uses):
+    """What one prompt cost in tokens: Claude's own calls (the Stop hook) and its agents' (SubagentStop), or None when
+    neither was counted (a record from before tokens were counted)."""
+    import tokens
+    main = (turn or {}).get("tokens")
+    agents = None
+    for u in uses:
+        agents = tokens.add(agents, u.get("tokens"))
+    both = tokens.add(main, agents)
+    if not both:
+        return None
+    return {"main": main, "agents": agents, "fresh": tokens.fresh(both), "total": tokens.total(both),
+            "output": both.get("output", 0), "calls": both.get("calls", 0)}
 
 
 def summary(events, span_ms=None, now_ms=None):
@@ -448,7 +471,7 @@ def summary(events, span_ms=None, now_ms=None):
 
     def uses(rows):
         return [{"name": u.get("name"), "tool": u.get("tool"), "ms": u.get("ms"), "followed": u.get("followed"),
-                 "text": u.get("text"), "judge": u.get("judge")} for u in rows]
+                 "text": u.get("text"), "judge": u.get("judge"), "tokens": u.get("tokens")} for u in rows]
 
     timeline = []
     for e in sorted(prompts + decisions + alone, key=lambda e: -e.get("ts", 0))[:TIMELINE]:
@@ -461,11 +484,16 @@ def summary(events, span_ms=None, now_ms=None):
         turn = turn_of.get(id(e))
         if turn:
             item["turn"] = {"ms": turn.get("ms"), "tools": turn.get("tools") or {}}
+            spent = _prompt_tokens(turn, links.get(id(e), []))
+            if spent:
+                item["turn"]["tokens"] = spent
         plan = _plan(e, links.get(id(e), []), tasks_of.get(id(e), []), turn)
         if plan:
             item["plan"] = plan
         timeline.append(item)
     asked = [u for u in used if "followed" in u]
+    spent = [t for t in (_prompt_tokens(turn_of.get(id(h)), links.get(id(h), [])) for h in prompts) if t]
+    guards = [e for e in events if e.get("kind") == "guard"]
     out = {
         "nodes": sorted(nodes.values(), key=lambda n: (n["col"], -n["count"])),
         "paths": sorted(paths.values(), key=lambda p: (-p["count"], p["task"])),
@@ -481,6 +509,12 @@ def summary(events, span_ms=None, now_ms=None):
             "avg_hint_ms": round(sum(float(h.get("ms") or 0) for h in hints) / len(hints), 1) if hints else None,
             "avg_decision_ms": round(sum(float(d.get("ms") or 0) for d in decisions) / len(decisions), 1)
             if decisions else None,
+            "tokens": {"prompts": len(spent), "fresh": sum(t["fresh"] for t in spent),
+                       "total": sum(t["total"] for t in spent), "output": sum(t["output"] for t in spent),
+                       "calls": sum(t["calls"] for t in spent),
+                       "avg_fresh": int(sum(t["fresh"] for t in spent) / len(spent)) if spent else None},
+            "guard": {"notes": len(guards), "at_stake": sum(int(g.get("tokens") or 0) for g in guards),
+                      "rules": _count_by(guards, "rule")},
             "first": min(e.get("ts", 0) for e in events) if events else None,
             "last": max(e.get("ts", 0) for e in events) if events else None,
         },
@@ -768,6 +802,16 @@ def text_tree(s, limit=10):
             if p.get("avg_ms") is not None:
                 t += " · " + ms_text(p["avg_ms"])
             lines.append(t)
+    st = s.get("stats") or {}
+    tk, gd = st.get("tokens") or {}, st.get("guard") or {}
+    if tk.get("prompts"):
+        import tokens
+        lines.append("Tokens: %s new over %d prompts (about %s each; %s output), %s calls" % (
+            tokens.short(tk["fresh"]), tk["prompts"], tokens.short(tk["avg_fresh"]), tokens.short(tk["output"]),
+            tk["calls"]))
+    if gd.get("notes"):
+        import tokens
+        lines.append("Token guard: %d notes, up to about %s tokens at stake" % (gd["notes"], tokens.short(gd["at_stake"])))
     return lines
 
 

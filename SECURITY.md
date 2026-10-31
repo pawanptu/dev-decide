@@ -40,10 +40,22 @@ You will get a reply within 7 days. We will tell you when it is fixed and, if yo
   which Claude ran an agent or skill, with that agent's name, in `~/.claude/dev-decide/traces/usage/`, never the
   prompt's text. `"router_hook": {"learn": false}` turns it off. For an agent's run time it reads only the first
   line's timestamp of the agent's transcript; at the end of each reply it reads the transcript's tail and keeps only
-  the reply's duration and the names and counts of the tools used, never their inputs or results. Plan steps
+  the reply's duration, the names and counts of the tools used and the four token counts Claude Code already writes
+  there (new, cache write, cache read, output; numbers only), never their inputs or results. Plan steps
   (to-do items and tasks) keep their first 40 characters, like prompts. To judge a sub-task and teach the usage
   memory it reads the sub-task Claude gave an agent in memory only; it keeps the first 40 characters of its short
   description, never the prompt Claude wrote for the agent.
+- **The token guard** (a `PreToolUse` hook on `Read` and `Bash`, local rules only, no model call) looks at a file's size
+  and a command's words to add a note such as "this file is about 20,000 lines". It keeps in memory (not on disk, lost
+  when the server stops) which files were read and when, to notice a re-read; the trace keeps only the rule's name, the
+  tool and a token estimate, never a path or a command. `"token_guard": {"enabled": false}` turns it off.
+- **Instant answers** (off unless `"instant": {"enabled": true}`): a prompt that starts with `/dev-decide ` is answered
+  by the local engine instead of Claude. It runs the same engine with the same model backend as the skill, so the
+  request goes where the skill's would; nothing else about the prompt is stored.
+- **The files hint** (experimental, off unless `"files_hint": {"enabled": true}`) keeps, with the usage memory above, the
+  path relative to the project of each file Claude edited after a prompt and that prompt's meaning vector. It never
+  keeps a file outside the project, in `.git`, or with a name that suggests a secret (`.env`, keys, tokens,
+  credentials), and no file contents.
 - **The web console** loads only its own scripts (`script-src 'self'`: no inline script, no `eval`, no CDN), and a
   key typed into it is sent with that one request only, never stored.
 

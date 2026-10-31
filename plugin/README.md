@@ -34,13 +34,15 @@ Reading a result: `risk 3.0? | needs a human: risk` means a score of 3.0 on a sc
 ## What the plugin installs
 
 - **Skill** `dev-decide`, in `skills/dev-decide/`.
-- **Eight hooks**, in `hooks/hooks.json`:
+- **Nine hook entries**, in `hooks/hooks.json`:
   - `SessionStart` starts a small helper server bound to `127.0.0.1` only.
   - `UserPromptSubmit` asks that local server whether one of your agents or skills clearly matches the prompt. If so, it adds a one-line routing hint.
-  - `PostToolUse` (only for the `Agent`, `Skill` and `TodoWrite` tools) tells the server which agent or skill Claude really used and, from the to-do list, the steps of its plan, for the decision graph and so the hint learns which agent fits which kind of request.
+  - A second `UserPromptSubmit` hook, `/instant`, does nothing unless you set `{"instant": {"enabled": true}}`; then a prompt starting with `/dev-decide ` is answered by the local engine and Claude is not used for it.
+  - `PreToolUse` (only for `Read` and `Bash`) is the **token guard**: a local, instant check (no model) that adds a note when Claude is about to read a big file whole, read an unchanged file again, run `git log` with no count or `cat` a big file. It only advises; `{"token_guard": {"mode": "block_first"}}` refuses the first big read once instead, and `{"token_guard": {"enabled": false}}` turns it off.
+  - `PostToolUse` (for the `Agent`, `Skill` and `TodoWrite` tools, and for edits, which only feed the experimental, off-by-default `files_hint`) tells the server which agent or skill Claude really used and, from the to-do list, the steps of its plan, for the decision graph and so the hint learns which agent fits which kind of request.
   - `SubagentStart` and `SubagentStop` tell it each agent's id, how long it ran and which tools it used, so agents nest under the agent that launched them.
   - `TaskCreated` and `TaskCompleted` give the steps of a plan made with Claude Code's task tools.
-  - `Stop` marks the end of each reply: how long it took and which tools Claude used (names and counts only), so a prompt no agent handled shows "Claude itself".
+  - `Stop` marks the end of each reply: how long it took, which tools Claude used (names and counts only) and the tokens it spent (the counts Claude Code writes in its transcript), so a prompt no agent handled shows "Claude itself". The decision graph shows the tokens per prompt and a "Tokens spent" tile.
 
 ## Decision graph
 

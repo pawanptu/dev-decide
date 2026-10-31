@@ -21,6 +21,7 @@
   "cache_ttl_hours": 24,
   "router_hook": {"min_confidence": 0.6, "min_margin": 0.2, "builtins": false},
   "decision_graph": {"enabled": true, "keep_days": 14, "prompt_chars": 40},
+  "token_guard": {"enabled": true, "mode": "advise"},
   "routes": {
     "builtins": true,
     "exclude": ["statusline-setup"],

@@ -6,8 +6,10 @@ Windows). This server keeps all of that loaded, so a hint takes a few millisecon
 
   UserPromptSubmit  {"type": "http", "url": "http://127.0.0.1:47321/route", "timeout": 2}
   PostToolUse       {"type": "http", "url": "http://127.0.0.1:47321/tool", "timeout": 2}   (matcher "Agent|Skill")
+  UserPromptSubmit  {"type": "http", "url": "http://127.0.0.1:47321/instant", "timeout": 60}   (off unless "instant" is on)
+  PreToolUse        {"type": "http", "url": "http://127.0.0.1:47321/guard", "timeout": 2}   (matcher "Read|Bash", token guard)
   SubagentStop      {"type": "http", "url": "http://127.0.0.1:47321/agent", "timeout": 2}
-  Stop              {"type": "http", "url": "http://127.0.0.1:47321/turn", "timeout": 2}
+  Stop            {"type": "http", "url": "http://127.0.0.1:47321/turn", "timeout": 2}
   SubagentStart     {"type": "http", "url": "http://127.0.0.1:47321/agent", "timeout": 2}
   TaskCreated, TaskCompleted   {"type": "http", "url": "http://127.0.0.1:47321/task", "timeout": 2}
   SessionStart      {"type": "command", "command": "sh <scripts>/run.sh hookd.py --ensure"}
@@ -142,6 +144,13 @@ def serve():
             learned.add((hit[0], name))
             hook_route.learn_use(data, hit[1], hit[0])
 
+    def learn_files_from(data):  # experimental "files_hint": the file Claude edited after this session's latest prompt
+        if data.get("tool_name") in hook_route.EDIT_TOOLS:
+            with seen_lock:
+                hit = last_prompt.get(data.get("session_id") or "")
+            if hit:
+                hook_route.learn_files(data, hit[1], hit[0])
+
     def later(fn, *args):  # trace writes happen after the answer is sent, so they never slow a prompt
         def run():
             try:
@@ -149,6 +158,12 @@ def serve():
             except Exception:
                 pass
         threading.Thread(target=run, daemon=True).start()
+
+    def record_guard(ev):
+        import traces
+        ev = dict(ev)
+        root, days = ev.pop("root"), ev.pop("keep_days", traces.KEEP_DAYS)
+        traces.record(root, ev, days)
 
     def graph_data(q):
         import traces
@@ -229,7 +244,7 @@ def serve():
                 self._send(200, {"ok": True})
                 threading.Thread(target=httpd.shutdown, daemon=True).start()
                 return
-            if path not in ("/route", "/tool", "/agent", "/turn", "/task"):
+            if path not in ("/route", "/instant", "/tool", "/agent", "/turn", "/task", "/guard"):
                 return self._send(404, {"error": "not found"})
             out = ev = data = None
             try:
@@ -241,6 +256,17 @@ def serve():
                     if first_use(data):
                         later(hook_route.used, data)
                         later(learn_from, data)
+                        later(learn_files_from, data)
+                elif path == "/instant":  # a `/dev-decide ...` prompt answered here, when "instant" is on (see hook_route)
+                    if first_time({"session_id": "instant", "prompt": "%s %s" % (data.get("session_id"), data.get("prompt"))}):
+                        out = hook_route.instant(data)
+                elif path == "/guard":  # PreToolUse: a note before a wasteful read, from local rules only
+                    tid = data.get("tool_use_id") or json.dumps([data.get("session_id"), data.get("tool_name"),
+                                                                 data.get("tool_input")], sort_keys=True, default=str)
+                    if first_time({"session_id": "guard", "prompt": tid}):
+                        out, gev = hook_route.guard(data)
+                        if gev:
+                            later(record_guard, gev)
                 elif path == "/turn":  # Stop: the reply to the latest prompt is done
                     if data.get("hook_event_name") == "Stop" and first_time(
                             {"session_id": "turn", "prompt": "%s %s" % (data.get("session_id"), int(time.time()))}):

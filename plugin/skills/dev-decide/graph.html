@@ -101,9 +101,7 @@
   .mark.good { background:var(--good); } .mark.bad { background:var(--bad); }
 
   /* tiles */
-  .tiles { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:12px; margin-bottom:18px; }
-  @media (max-width:1100px) { .tiles { grid-template-columns:repeat(3,minmax(0,1fr)); } }
-  @media (max-width:560px) { .tiles { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+  .tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:18px; }
   .tile { background:var(--surface); border:1px solid var(--line); border-radius:var(--r); padding:14px 15px 12px; min-width:0; box-shadow:var(--shadow);
           transition:transform .2s, border-color .2s; }
   .tile:hover { transform:translateY(-2px); border-color:var(--line-2); }
@@ -476,6 +474,14 @@
     if (v >= 1000) return (v / 1000).toFixed(1) + " s";
     return v >= 10 ? Math.round(v) + " ms" : (+v).toFixed(1) + " ms";
   }
+  function tok(n) {
+    n = Math.round(n || 0);
+    if (n >= 1e6) return (n / 1e6).toFixed(2) + "M";
+    if (n >= 1e4) return Math.round(n / 1e3) + "k";
+    if (n >= 1e3) return (n / 1e3).toFixed(1) + "k";
+    return String(n);
+  }
+  function tokText(t) { return t && t.fresh ? tok(t.fresh) + " new tokens" + (t.agents ? " (" + tok((t.agents.input || 0) + (t.agents.cache_write || 0) + (t.agents.output || 0)) + " in agents)" : "") : ""; }
   function plural(n, one, many) { return n + " " + (n === 1 ? one : (many || one + "s")); }
   function ago(ts) {
     var d = (Date.now() - ts) / 1000;
@@ -618,6 +624,13 @@
     var f = tile("decisions", "/dev-decide answers", "gavel");
     countUp(f.v, s.decisions, int); f.s.textContent = s.avg_decision_ms == null ? "none in this period" : "avg " + ms(s.avg_decision_ms);
     f.extra.textContent = ""; if (ser.decisions) f.extra.appendChild(spark(ser.decisions, "var(--s2)"));
+    var g = tile("tokens", "Tokens spent", "bolt");
+    var tk = s.tokens, gd = s.guard;
+    g.v.textContent = tk && tk.fresh ? tok(tk.fresh) : "–";
+    g.s.textContent = tk && tk.fresh ? "about " + tok(tk.avg_fresh) + " new per prompt, " + tok(tk.output) + " written"
+                                     : "counted when a reply ends (Stop hook)";
+    g.extra.textContent = "";
+    if (gd && gd.notes) g.extra.appendChild(el("div", "s", "guard: " + plural(gd.notes, "note") + ", up to " + tok(gd.at_stake) + " tokens at stake"));
   }
 
   // ---------- bars
@@ -954,7 +967,7 @@
       out.push({ icon: "bot", color: "var(--s4)", a: "Handled by an " + (u.tool === "Skill" ? "skill" : "agent") + (u.text ? ", for the sub-task" : ""),
                  b: u.name + (u.text ? "  “" + u.text + "”" : ""), c: u.ms ? "ran " + ms(u.ms) : "", ok: u.followed });
     });
-    else if (it.turn) out.push({ icon: "bot", color: "var(--s4)", a: "Handled by", b: ITSELF + ", without an agent", c: "reply took " + ms(it.turn.ms) + (toolsText(it.turn.tools) ? " · " + toolsText(it.turn.tools) : "") });
+    else if (it.turn) out.push({ icon: "bot", color: "var(--s4)", a: "Handled by", b: ITSELF + ", without an agent", c: "reply took " + ms(it.turn.ms) + (toolsText(it.turn.tools) ? " · " + toolsText(it.turn.tools) : "") + (tokText(it.turn.tokens) ? " · " + tokText(it.turn.tokens) : "") });
     else out.push({ icon: "bot", color: "var(--quiet)", a: "Handled by", b: "Claude is still working on it", c: "or this prompt is older than the reply hook" });
     return out;
   }
@@ -1010,7 +1023,7 @@
       if (it.turn) {
         var me = el("span", "tag"); var d2 = el("i", "dot"); d2.style.background = "var(--s4)"; me.appendChild(d2);
         me.appendChild(el("b", "", ITSELF));
-        me.appendChild(document.createTextNode(" · " + ms(it.turn.ms) + (toolsText(it.turn.tools) ? " · " + toolsText(it.turn.tools) : "")));
+        me.appendChild(document.createTextNode(" · " + ms(it.turn.ms) + (toolsText(it.turn.tools) ? " · " + toolsText(it.turn.tools) : "") + (tokText(it.turn.tokens) ? " · " + tokText(it.turn.tokens) : "")));
         me.title = "No agent or skill ran: Claude did the work with its own tools.";
         us.appendChild(me);
       } else {
